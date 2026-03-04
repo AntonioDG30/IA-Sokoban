@@ -1,0 +1,21 @@
+# Core
+gymnasium>=0.29
+pygame>=2.5
+numpy>=1.24
+
+# RL
+torch>=2.0
+stable-baselines3>=2.0
+tensorboard
+
+# LLM
+openai>=1.0
+
+# Analisi e grafici
+matplotlib
+seaborn
+pandas
+
+# Test
+pytest
+pytest-cov
