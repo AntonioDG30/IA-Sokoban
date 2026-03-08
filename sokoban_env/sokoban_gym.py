@@ -1,25 +1,30 @@
 """Ambiente Sokoban compatibile con Gymnasium.
 
 Implementa l'API completa Gymnasium:
-    reset()  → (obs, info)
-    step()   → (obs, reward, terminated, truncated, info)
-    render() → None oppure np.ndarray
-    close()  → None
+    reset()  -> (obs, info)
+    step()   -> (obs, reward, terminated, truncated, info)
+    render() -> None oppure np.ndarray
+    close()  -> None
 
-Spazio di osservazione:
-    Box(low=0, high=6, shape=(10, 10), dtype=np.int8)
+Spazio di osservazione (fisso 10x10 per compatibilita' SB3):
+    Box(low=0, high=7, shape=(10, 10), dtype=float32)
+    Per griglie piu' piccole (curriculum learning) viene applicato padding con
+    valore 7 (PADDING), distinto dai muri reali (0) e da tutte le celle di gioco (1-6).
 
 Spazio delle azioni:
-    Discrete(4)  — 0=su, 1=giù, 2=sinistra, 3=destra
+    Discrete(4)  -- 0=su, 1=giu, 2=sinistra, 3=destra
 
 Parametri costruttore:
-    directory_livelli  percorso alla dir contenente i dati Boxoban.
-                       Se None, usa i livelli integrati.
+    directory_livelli  percorso alla dir con i dati Boxoban (solo se 10x10).
     difficolta         'unfiltered', 'medium', 'hard'.
     split              'train', 'valid', 'test'.
     render_mode        None, 'human', 'rgb_array'.
     max_step           numero massimo di step per episodio (default 120).
     seme               seme per la randomizzazione dei livelli.
+    griglia_size       (righe, colonne) della griglia. Default (10, 10).
+                       Se != (10,10) usa GeneratoreLivelli (curriculum).
+    n_casse            numero di casse (solo per griglia_size != 10x10).
+    scala_manhattan    fattore scala reward shaping Manhattan (0.0 = off).
 """
 
 from typing import Any, Dict, Optional, Tuple
@@ -36,6 +41,7 @@ from sokoban_env.game_logic import (
 )
 from sokoban_env.reward import calcola_reward
 from sokoban_env.level_loader import CaricatoreLivelli
+from sokoban_env.level_generator import GeneratoreLivelli, padding_a_10x10
 from sokoban_env.renderer import RendererSokoban
 
 # Numero massimo di step per episodio (coerente con gym-sokoban e Boxoban)
@@ -62,6 +68,9 @@ class SokobanEnv(gymnasium.Env):
         render_mode: Optional[str] = None,
         max_step: int = MAX_STEP_PER_EPISODIO,
         seme: Optional[int] = None,
+        griglia_size: Tuple[int, int] = (10, 10),
+        n_casse: int = 4,
+        scala_manhattan: float = 0.0,
     ):
         super().__init__()
 
@@ -74,24 +83,34 @@ class SokobanEnv(gymnasium.Env):
 
         self.render_mode = render_mode
         self.max_step = max_step
+        self.griglia_size = griglia_size
+        self.scala_manhattan = scala_manhattan
 
-        # Spazio di osservazione: griglia 10×10, valori 0.0-6.0
-        # dtype float32 per compatibilità con SB3/PyTorch (i layer lineari
-        # richiedono tensori float). La griglia interna rimane int8.
+        # Spazio di osservazione: sempre 10x10 float32 (con padding per griglie piu' piccole).
+        # high=7.0 perche' il valore di padding e' 7 (distinto da MURO=0 e celle 1-6).
+        # Fisso per compatibilita' SB3 — il modello non viene reinizializzato tra fasi curriculum.
         self.observation_space = gymnasium.spaces.Box(
-            low=0.0, high=6.0, shape=(10, 10), dtype=np.float32
+            low=0.0, high=7.0, shape=(10, 10), dtype=np.float32
         )
 
         # Spazio delle azioni: 4 direzioni discrete
         self.action_space = gymnasium.spaces.Discrete(4)
 
-        # Caricatore livelli
-        self._caricatore = CaricatoreLivelli(
-            directory_base=directory_livelli,
-            difficolta=difficolta,
-            split=split,
-            seme=seme,
-        )
+        # Sorgente livelli: GeneratoreLivelli per curriculum, CaricatoreLivelli per Boxoban
+        self._usa_generatore = (griglia_size != (10, 10))
+        if self._usa_generatore:
+            self._generatore = GeneratoreLivelli(seme=seme)
+            self._n_casse = n_casse
+            self._caricatore = None
+        else:
+            self._generatore = None
+            self._n_casse = n_casse
+            self._caricatore = CaricatoreLivelli(
+                directory_base=directory_livelli,
+                difficolta=difficolta,
+                split=split,
+                seme=seme,
+            )
 
         # Renderer (lazy — creato solo se necessario)
         self._renderer: Optional[RendererSokoban] = None
@@ -126,8 +145,15 @@ class SokobanEnv(gymnasium.Env):
         """
         super().reset(seed=seed)
 
-        # Selezione livello: specifico per indice, oppure casuale
-        if options is not None and "indice_livello" in options:
+        # Selezione / generazione livello
+        if self._usa_generatore:
+            # Curriculum: genera livello procedurale per la griglia corrente
+            self._griglia = self._generatore.genera(
+                righe=self.griglia_size[0],
+                colonne=self.griglia_size[1],
+                n_casse=self._n_casse,
+            )
+        elif options is not None and "indice_livello" in options:
             indice = int(options["indice_livello"])
             self._griglia = self._caricatore.ottieni(indice)
         else:
@@ -136,7 +162,7 @@ class SokobanEnv(gymnasium.Env):
         self._step_corrente = 0
 
         info = self._costruisci_info(mossa_eseguita=False, cassa_spostata=False)
-        return self._griglia.astype(np.float32), info
+        return self._osservazione(), info
 
     def step(
         self, action: int
@@ -167,10 +193,13 @@ class SokobanEnv(gymnasium.Env):
         terminated = controlla_vittoria(self._griglia)
         truncated = (self._step_corrente >= self.max_step) and not terminated
 
-        # Calcola reward
-        reward = calcola_reward(griglia_precedente, self._griglia, terminated)
+        # Calcola reward (con eventuale shaping Manhattan)
+        reward = calcola_reward(
+            griglia_precedente, self._griglia, terminated,
+            scala_manhattan=self.scala_manhattan,
+        )
 
-        # Rendering automatico in modalità 'human'
+        # Rendering automatico in modalita' 'human'
         if self.render_mode == "human":
             self.render()
 
@@ -178,7 +207,7 @@ class SokobanEnv(gymnasium.Env):
             mossa_eseguita=mossa_eseguita,
             cassa_spostata=cassa_spostata,
         )
-        return self._griglia.astype(np.float32), reward, terminated, truncated, info
+        return self._osservazione(), reward, terminated, truncated, info
 
     def render(self) -> Optional[np.ndarray]:
         """Renderizza lo stato corrente dell'ambiente.
@@ -210,6 +239,18 @@ class SokobanEnv(gymnasium.Env):
     # Metodi di supporto
     # ------------------------------------------------------------------
 
+    def _osservazione(self) -> np.ndarray:
+        """Restituisce l'osservazione corrente come array float32 10x10.
+
+        Per griglie piu' piccole di 10x10 applica zero-padding centrato.
+        L'observation space e' sempre (10,10) per compatibilita' SB3.
+        """
+        if self._griglia is None:
+            return np.zeros((10, 10), dtype=np.float32)
+        if self._usa_generatore:
+            return padding_a_10x10(self._griglia).astype(np.float32)
+        return self._griglia.astype(np.float32)
+
     def _costruisci_info(
         self, mossa_eseguita: bool, cassa_spostata: bool
     ) -> Dict[str, Any]:
@@ -237,6 +278,8 @@ class SokobanEnv(gymnasium.Env):
     def __repr__(self) -> str:
         return (
             f"SokobanEnv("
+            f"griglia={self.griglia_size}, "
             f"step={self._step_corrente}/{self.max_step}, "
+            f"manhattan={self.scala_manhattan}, "
             f"render_mode={self.render_mode!r})"
         )

@@ -1,0 +1,236 @@
+"""Script di training AG-DQN v4 con curriculum learning + CnnPolicy (Fase 2.4).
+
+Identico a train_dqn_curriculum.py ma usa una CNN come estrattore di features
+anziche' MLP. La CNN e' invariante alla traslazione: impara pattern locali
+(es. "cassa vicina al target") che si generalizzano tra griglie di dimensione
+diversa (5x5 → 7x7 → 10x10 nel curriculum).
+
+Struttura curriculum (v3, stessa dei precedenti script):
+    C0: 5x5,  1 cassa, 300k step  (bootstrap: impara la meccanica base)
+    C1: 5x5,  2 casse, 400k step  (trasferimento)
+    C2: 7x7,  3 casse, 400k step  (generalizzazione - qui la CNN fa la differenza)
+    C3: 10x10, 4 casse, 300k step (Boxoban, task finale)
+
+Osservazione: (10, 10) float32 → AggiuntaCanale → (1, 10, 10) float32
+Policy: CnnPolicy con SokobanCNN come feature extractor (features_dim=256)
+Nota: DQN non supporta ambienti paralleli (n_envs=1 fisso).
+
+Uso:
+    python experiments/train_dqn_curriculum_cnn.py --seed 42
+    python experiments/train_dqn_curriculum_cnn.py --seed 42 --solo_valuta
+
+Modelli salvati in: models/dqn_v4/
+"""
+
+import argparse
+import sys
+from pathlib import Path
+from typing import List
+
+RADICE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(RADICE))
+
+from stable_baselines3 import DQN
+from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback, EvalCallback
+from stable_baselines3.common.monitor import Monitor
+
+from sokoban_env import SokobanEnv
+from sokoban_env.cnn_wrapper import AggiuntaCanale
+from sokoban_env.sokoban_cnn import SokobanCNN
+from experiments.config import (
+    CONFIG_DQN, SEEDS, FASI_CURRICULUM, SCALA_MANHATTAN,
+    DIR_DATI, DIR_LOG, DIR_MODELLI,
+    percorso_modello_dqn_v4,
+)
+
+# Policy kwargs per CnnPolicy con SokobanCNN
+POLICY_KWARGS_CNN = {
+    "features_extractor_class":  SokobanCNN,
+    "features_extractor_kwargs": {"features_dim": 256},
+}
+
+
+def _crea_env_fase(fase: dict, dir_dati: str, seme: int) -> Monitor:
+    """Crea SokobanEnv + AggiuntaCanale + Monitor per la fase specificata."""
+    griglia = tuple(fase["griglia"])
+    if fase["dataset"] == "generato":
+        env = SokobanEnv(
+            griglia_size=griglia,
+            n_casse=fase["n_casse"],
+            scala_manhattan=SCALA_MANHATTAN,
+            seme=seme,
+        )
+    else:
+        env = SokobanEnv(
+            directory_livelli=dir_dati,
+            difficolta="unfiltered",
+            split="train",
+            griglia_size=griglia,
+            n_casse=fase["n_casse"],
+            scala_manhattan=SCALA_MANHATTAN,
+            seme=seme,
+        )
+    return Monitor(AggiuntaCanale(env))
+
+
+def addestra_curriculum(seme: int, solo_valuta: bool) -> None:
+    """Esegue il training curriculum DQN-CNN per un singolo seed."""
+    dir_dati = str(DIR_DATI) if DIR_DATI.exists() else None
+    dir_output = str(DIR_MODELLI / "dqn_v4")
+    percorso = percorso_modello_dqn_v4(seme)
+
+    if solo_valuta:
+        if not percorso.with_suffix(".zip").exists():
+            print(f"[train_dqn_cnn] Modello non trovato: {percorso}.zip")
+            return
+        env_test = Monitor(AggiuntaCanale(SokobanEnv(
+            directory_livelli=dir_dati,
+            difficolta="unfiltered",
+            split="test",
+        )))
+        modello = DQN.load(str(percorso), env=env_test)
+        _valuta_finale(modello, dir_dati, seme)
+        return
+
+    Path(dir_output).mkdir(parents=True, exist_ok=True)
+
+    config = {k: v for k, v in CONFIG_DQN.items() if k not in ("tensorboard_log", "policy")}
+    modello = None
+
+    for i, fase in enumerate(FASI_CURRICULUM):
+        nome_fase = fase["nome"]
+        timestep_fase = fase["timestep"]
+        prima_fase = (i == 0)
+
+        print(f"\n{'=' * 60}")
+        print(f"[DQN-CNN] Seed {seme} | {nome_fase} | {timestep_fase:,} step")
+        print(f"  Griglia: {fase['griglia']} | Casse: {fase['n_casse']} | CNN: SokobanCNN(256)")
+        print(f"{'=' * 60}")
+
+        env_train = _crea_env_fase(fase, dir_dati, seme)
+        env_val   = _crea_env_fase(fase, dir_dati, seme)
+
+        if prima_fase:
+            modello = DQN(
+                policy="CnnPolicy",
+                env=env_train,
+                seed=seme,
+                tensorboard_log=str(DIR_LOG),
+                policy_kwargs=POLICY_KWARGS_CNN,
+                **config,
+            )
+        else:
+            modello.set_env(env_train)
+
+        callbacks: List[BaseCallback] = []
+
+        eval_cb = EvalCallback(
+            env_val,
+            best_model_save_path=f"{dir_output}/best_{nome_fase}_seed{seme}",
+            log_path=f"{dir_output}/eval_{nome_fase}_seed{seme}",
+            eval_freq=10_000,
+            n_eval_episodes=20,
+            deterministic=True,
+            render=False,
+            verbose=0,
+        )
+        callbacks.append(eval_cb)
+
+        ckpt_cb = CheckpointCallback(
+            save_freq=100_000,
+            save_path=f"{dir_output}/checkpoints",
+            name_prefix=f"dqn_cnn_{nome_fase}_seed{seme}",
+            verbose=0,
+        )
+        callbacks.append(ckpt_cb)
+
+        modello.learn(
+            total_timesteps=timestep_fase,
+            callback=callbacks,
+            tb_log_name=f"DQN_CNN_seed{seme}",
+            reset_num_timesteps=prima_fase,
+            progress_bar=False,
+        )
+
+        print(f"[DQN-CNN] {nome_fase} completata.")
+
+    modello.save(str(percorso))
+    print(f"\n[DQN-CNN] Modello finale salvato: {percorso}.zip")
+    _valuta_finale(modello, dir_dati, seme)
+
+
+def _valuta_finale(modello, dir_dati, seme: int) -> None:
+    """Valuta il modello finale su tutti i set Boxoban."""
+    import numpy as np
+    for diff, split in [("unfiltered", "test"), ("medium", "valid")]:
+        test_path = DIR_DATI / diff / split
+        if dir_dati is None or not test_path.exists():
+            print(f"[DQN-CNN] {diff}/{split} non trovato, saltato.")
+            continue
+
+        env = Monitor(AggiuntaCanale(SokobanEnv(
+            directory_livelli=dir_dati,
+            difficolta=diff,
+            split=split,
+        )))
+
+        n_risolti = 0
+        reward_totali = []
+        n_ep = 100
+
+        for _ in range(n_ep):
+            obs, _ = env.reset()
+            reward_ep = 0.0
+            done = False
+            while not done:
+                azione, _ = modello.predict(obs, deterministic=True)
+                obs, r, terminated, truncated, _ = env.step(int(azione))
+                reward_ep += float(r)
+                done = terminated or truncated
+            if terminated:
+                n_risolti += 1
+            reward_totali.append(reward_ep)
+
+        env.close()
+        print(
+            f"\n[AgenteDQN-v4-CNN] Valutazione ({diff}/{split}, {n_ep} episodi):\n"
+            f"  Solve rate:        {n_risolti/n_ep*100:.1f}%\n"
+            f"  Reward cumulativa: {float(np.mean(reward_totali)):.3f}"
+        )
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Training DQN v4 con curriculum + CnnPolicy (Fase 2.4)."
+    )
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Seed specifico (default: tutti i seed).")
+    parser.add_argument("--solo_valuta", action="store_true",
+                        help="Salta il training e valuta il modello salvato.")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
+    seed_da_usare = [args.seed] if args.seed is not None else SEEDS
+
+    print("=" * 60)
+    print("AG-DQN v4 -- Curriculum Learning + CnnPolicy (SokobanCNN)")
+    print(f"  Seed:            {seed_da_usare}")
+    print(f"  Scala Manhattan: {SCALA_MANHATTAN}")
+    print(f"  Fasi:            {[f['nome'] for f in FASI_CURRICULUM]}")
+    print(f"  Timestep tot:    {sum(f['timestep'] for f in FASI_CURRICULUM):,}")
+    print(f"  CNN:             SokobanCNN(features_dim=256)")
+    print("=" * 60)
+
+    for seme in seed_da_usare:
+        print(f"\n{'-' * 40}")
+        print(f"SEED {seme}")
+        print(f"{'-' * 40}")
+        addestra_curriculum(seme=seme, solo_valuta=args.solo_valuta)
+
+    print("\n[train_dqn_curriculum_cnn] Tutti i seed completati.")
+
+
+if __name__ == "__main__":
+    main()

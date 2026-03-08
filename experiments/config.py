@@ -64,6 +64,7 @@ CONFIG_PPO = {
     "clip_range":      0.2,
     "ent_coef":        0.01,
     "verbose":         1,
+    "device":          "auto",   # GPU se disponibile, CPU altrimenti
     "tensorboard_log": str(DIR_LOG / "ppo"),
 }
 
@@ -84,6 +85,7 @@ CONFIG_DQN = {
     "exploration_final_eps":     0.05,
     "target_update_interval":    1_000,
     "verbose":                   1,
+    "device":                    "auto",   # GPU se disponibile, CPU altrimenti
     "tensorboard_log":           str(DIR_LOG / "dqn"),
 }
 
@@ -139,13 +141,90 @@ INTERVALLO_VALUTAZIONE = 100_000  # ogni N timesteps durante il training
 # ---------------------------------------------------------------------------
 
 def percorso_modello_ppo(seed: int) -> Path:
-    """Restituisce il percorso del checkpoint PPO per un dato seed."""
+    """Restituisce il percorso del checkpoint PPO v1 (senza curriculum) per un dato seed."""
     return DIR_MODELLI / "ppo" / f"ppo_seed{seed}"
 
 def percorso_modello_dqn(seed: int) -> Path:
-    """Restituisce il percorso del checkpoint DQN per un dato seed."""
+    """Restituisce il percorso del checkpoint DQN v1 (senza curriculum) per un dato seed."""
     return DIR_MODELLI / "dqn" / f"dqn_seed{seed}"
 
 def percorso_modello_llm_rew(seed: int) -> Path:
     """Restituisce il percorso del checkpoint PPO+LLM-reward per un dato seed."""
     return DIR_MODELLI / "ppo" / f"llm_rew_seed{seed}"
+
+def percorso_modello_ppo_v2(seed: int) -> Path:
+    """Restituisce il percorso del checkpoint PPO v2 (con curriculum) per un dato seed."""
+    return DIR_MODELLI / "ppo_v2" / f"ppo_curriculum_seed{seed}"
+
+def percorso_modello_dqn_v2(seed: int) -> Path:
+    """Restituisce il percorso del checkpoint DQN v2 (con curriculum) per un dato seed."""
+    return DIR_MODELLI / "dqn_v2" / f"dqn_curriculum_seed{seed}"
+
+def percorso_modello_ppo_v4(seed: int) -> Path:
+    """Restituisce il percorso del checkpoint PPO v4 (curriculum + CnnPolicy) per un dato seed."""
+    return DIR_MODELLI / "ppo_v4" / f"ppo_cnn_seed{seed}"
+
+def percorso_modello_dqn_v4(seed: int) -> Path:
+    """Restituisce il percorso del checkpoint DQN v4 (curriculum + CnnPolicy) per un dato seed."""
+    return DIR_MODELLI / "dqn_v4" / f"dqn_cnn_seed{seed}"
+
+def percorso_modello_ppo_v5(seed: int) -> Path:
+    """Restituisce il percorso del checkpoint PPO v5 (curriculum + CnnPolicy + padding distinto) per un dato seed."""
+    return DIR_MODELLI / "ppo_v5" / f"ppo_cnn_v5_seed{seed}"
+
+def percorso_modello_dqn_v5(seed: int) -> Path:
+    """Restituisce il percorso del checkpoint DQN v5 (curriculum + CnnPolicy + padding distinto) per un dato seed."""
+    return DIR_MODELLI / "dqn_v5" / f"dqn_cnn_v5_seed{seed}"
+
+
+# ---------------------------------------------------------------------------
+# Curriculum learning (Fase 2.3)
+# ---------------------------------------------------------------------------
+
+# Fattore di scala per il reward shaping Manhattan (0.0 = disabilitato)
+SCALA_MANHATTAN = 0.3
+
+# Fasi curriculum: ogni fase addestra su griglie di dimensione crescente.
+# I pesi del modello SB3 vengono preservati tra fasi (set_env()).
+#
+# v2 (FALLITA): C1 5x5/2casse -> C2 7x7/3casse -> C3 10x10/4casse
+#   Problema: con 2 casse l'esplorazione casuale trova raramente una vittoria.
+#   DQN C1 arrivava a 30% ma in modo instabile, PPO quasi 0%.
+#   Al cambio C1->C2 entrambi collassavano a 0%.
+#
+# v3 (CORRETTA): aggiunta fase C0 con 1 cassa (trivialmente risolvibile).
+#   Con 1 cassa l'esplorazione casuale trova la vittoria regolarmente.
+#   L'agente impara "spingere cassa verso target = bene" prima di affrontare 2 casse.
+FASI_CURRICULUM = [
+    {
+        "nome":        "C0-5x5-1box",
+        "griglia":     (5, 5),
+        "n_casse":     1,
+        "timestep":    300_000,
+        "dataset":     "generato",   # usa GeneratoreLivelli
+    },
+    {
+        "nome":        "C1-5x5-2box",
+        "griglia":     (5, 5),
+        "n_casse":     2,
+        "timestep":    400_000,
+        "dataset":     "generato",
+    },
+    {
+        "nome":        "C2-7x7-3box",
+        "griglia":     (7, 7),
+        "n_casse":     3,
+        "timestep":    400_000,
+        "dataset":     "generato",
+    },
+    {
+        "nome":        "C3-10x10",
+        "griglia":     (10, 10),
+        "n_casse":     4,
+        "timestep":    300_000,
+        "dataset":     "boxoban",    # usa CaricatoreLivelli su Boxoban unfiltered
+    },
+]
+
+# Timestep totale curriculum v3 (somma delle fasi): 1_400_000
+TIMESTEPS_CURRICULUM = sum(f["timestep"] for f in FASI_CURRICULUM)
