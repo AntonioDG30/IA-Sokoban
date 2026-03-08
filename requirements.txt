@@ -2,6 +2,7 @@
 gymnasium>=0.29
 pygame>=2.5
 numpy>=1.24
+scipy>=1.10
 
 # RL
 torch>=2.0

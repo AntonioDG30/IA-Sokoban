@@ -5,7 +5,7 @@ Esporta:
     CaricatoreLivelli caricamento livelli Boxoban
     calcola_reward    funzione reward di default
     game_logic        costanti e funzioni di logica di gioco
-    AggiuntaCanale    wrapper che aggiunge dim canale: (H,W) → (1,H,W)
+    AggiuntaCanale    wrapper che aggiunge dim canale: (H,W) -> (1,H,W)
     SokobanCNN        estrattore CNN per CnnPolicy SB3
 """
 
