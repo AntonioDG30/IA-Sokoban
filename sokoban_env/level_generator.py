@@ -20,7 +20,8 @@ from collections import deque
 from typing import Optional, Tuple
 
 from sokoban_env.game_logic import (
-    MURO, PAVIMENTO, TARGET, CASSA, CASSA_SU_TARGET, GIOCATORE,
+    MURO, PAVIMENTO, TARGET, CASSA, CASSA_SU_TARGET,
+    GIOCATORE, GIOCATORE_SU_TARGET,
     applica_mossa, controlla_vittoria,
 )
 
@@ -135,23 +136,46 @@ class GeneratoreLivelli:
         return griglia
 
     # ------------------------------------------------------------------
-    # Verifica risolvibilita' tramite BFS
+    # Verifica risolvibilita': BFS esatto o euristica dead-corner
     # ------------------------------------------------------------------
 
+    # Soglia stati BFS: per spazi piccoli usa BFS esatto, altrimenti euristica.
+    # 10x10 con 1 cassa: ~64^2 = 4096 stati -> BFS esatto.
+    # 10x10 con 2+ casse: >262144 stati -> euristica dead-corner.
+    MAX_STATI_BFS = 50_000
+
     def _verifica_risolvibile(self, griglia: np.ndarray) -> bool:
-        """Esegue BFS nello spazio degli stati per verificare la risolvibilita'.
+        """Sceglie tra BFS esatto ed euristica in base alla complessita' del problema.
 
-        Restituisce True se esiste una sequenza di mosse che porta alla vittoria.
-        Limite: MAX_STATI_BFS stati esplorati per evitare OOM su griglie grandi.
+        Per spazi stati piccoli (1 cassa su griglia piccola) usa BFS esatto.
+        Per spazi grandi (2+ casse su 10x10) usa l'euristica dead-corner:
+        piu' veloce, non garantisce risolvibilita' ma filtra i casi ovviamente
+        impossibili (casse bloccate in angoli senza target adiacente).
         """
-        MAX_STATI_BFS = 50_000
+        righe, colonne = griglia.shape
+        n_casse = int((griglia == CASSA).sum())
+        # Stima conservativa dello spazio stati: celle_interne^(n_casse+1)
+        celle_interne = max(1, (righe - 2) * (colonne - 2))
+        stima_stati = celle_interne ** (n_casse + 1)
 
+        if stima_stati <= self.MAX_STATI_BFS:
+            # BFS esatto: possibile solo per configurazioni piccole
+            return self._bfs_esatto(griglia)
+        else:
+            # Euristica: controllo dead-corner + connettivita' giocatore-casse
+            return self._euristica_dead_corner(griglia)
+
+    def _bfs_esatto(self, griglia: np.ndarray) -> bool:
+        """BFS nello spazio degli stati completo (esatto ma costoso).
+
+        Restituisce True se esiste una soluzione entro MAX_STATI_BFS stati.
+        """
         stato_iniziale = griglia.tobytes()
         visitati = {stato_iniziale}
         coda = deque([griglia.copy()])
         n_esplorati = 0
 
-        while coda and n_esplorati < MAX_STATI_BFS:
+        while coda and n_esplorati < self.MAX_STATI_BFS:
             stato = coda.popleft()
             n_esplorati += 1
 
@@ -167,6 +191,74 @@ class GeneratoreLivelli:
                     coda.append(nuovo_stato)
 
         return False
+
+    def _euristica_dead_corner(self, griglia: np.ndarray) -> bool:
+        """Verifica euristica per griglie grandi (necessaria, non sufficiente).
+
+        Controlla due condizioni che ESCLUDONO livelli ovviamente irrisolvibili:
+        1. Nessuna cassa libera e' in dead-corner: angolo formato da due muri
+           perpendicolari senza un target esattamente in quell'angolo.
+        2. Il giocatore puo' raggiungere almeno una cassa (connettivita' base).
+
+        Falsi positivi possibili (livello accettato ma non risolvibile) sono
+        tollerabili: l'agente RL impara comunque da episodi troncati.
+        """
+        righe, colonne = griglia.shape
+
+        # --- 1. Dead-corner check ---
+        # Posizioni target (la cassa non e' dead-corner SE e' gia' su target)
+        target_pos = set(
+            map(tuple, np.argwhere(
+                (griglia == TARGET) | (griglia == CASSA_SU_TARGET)
+            ))
+        )
+
+        for r in range(1, righe - 1):
+            for c in range(1, colonne - 1):
+                if griglia[r, c] != CASSA:
+                    continue  # Solo casse libere
+                if (r, c) in target_pos:
+                    continue  # Gia' su target: non e' dead
+
+                # Angolo morto: bloccata da muro in almeno una direzione verticale
+                # E in almeno una direzione orizzontale
+                muro_v = (griglia[r - 1, c] == MURO) or (griglia[r + 1, c] == MURO)
+                muro_h = (griglia[r, c - 1] == MURO) or (griglia[r, c + 1] == MURO)
+                if muro_v and muro_h:
+                    return False  # Cassa irrecuperabile
+
+        # --- 2. Connettivita' giocatore-casse (flood fill) ---
+        pos_g = np.argwhere(
+            (griglia == GIOCATORE) | (griglia == GIOCATORE_SU_TARGET)
+        )
+        if len(pos_g) == 0:
+            return False
+        r_g, c_g = int(pos_g[0, 0]), int(pos_g[0, 1])
+
+        # BFS sul solo movimento del giocatore (casse = ostacoli fissi)
+        raggiungibili: set = set()
+        coda_ff: deque = deque([(r_g, c_g)])
+        while coda_ff:
+            r, c = coda_ff.popleft()
+            if (r, c) in raggiungibili:
+                continue
+            if not (0 <= r < righe and 0 <= c < colonne):
+                continue
+            cella = griglia[r, c]
+            if cella == MURO or cella == CASSA:
+                continue
+            raggiungibili.add((r, c))
+            for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                coda_ff.append((r + dr, c + dc))
+
+        # Almeno una cassa deve essere adiacente a una cella raggiungibile
+        casse = np.argwhere((griglia == CASSA) | (griglia == CASSA_SU_TARGET))
+        for r_c, c_c in casse:
+            for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                if (r_c + dr, c_c + dc) in raggiungibili:
+                    return True  # Giocatore puo' raggiungere questa cassa
+
+        return False  # Nessuna cassa accessibile
 
 
 # ---------------------------------------------------------------------------

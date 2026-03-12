@@ -37,6 +37,7 @@ from sokoban_env.game_logic import (
     controlla_vittoria,
     conta_casse_su_target,
     GIOCATORE, GIOCATORE_SU_TARGET,
+    CASSA, CASSA_SU_TARGET,
     NOMI_AZIONI,
 )
 from sokoban_env.reward import calcola_reward
@@ -71,7 +72,23 @@ class SokobanEnv(gymnasium.Env):
         griglia_size: Tuple[int, int] = (10, 10),
         n_casse: int = 4,
         scala_manhattan: float = 0.0,
+        usa_generatore: bool = False,
     ):
+        """Crea l'ambiente Sokoban.
+
+        Parametri:
+            directory_livelli: path a data/boxoban/ (solo dataset Boxoban).
+            difficolta:        'unfiltered' | 'medium' | 'hard'.
+            split:             'train' | 'valid' | 'test'.
+            render_mode:       None | 'human' | 'rgb_array'.
+            max_step:          step massimi per episodio.
+            seme:              seed per riproducibilita'.
+            griglia_size:      (righe, colonne). Default (10, 10).
+            n_casse:           numero casse (solo curriculum generato).
+            scala_manhattan:   fattore reward shaping Manhattan. 0.0 = off.
+            usa_generatore:    True = usa GeneratoreLivelli anche su griglia 10x10.
+                               Necessario per fasi curriculum 'generato' con griglie fisse.
+        """
         super().__init__()
 
         # Validazione render_mode
@@ -96,8 +113,10 @@ class SokobanEnv(gymnasium.Env):
         # Spazio delle azioni: 4 direzioni discrete
         self.action_space = gymnasium.spaces.Discrete(4)
 
-        # Sorgente livelli: GeneratoreLivelli per curriculum, CaricatoreLivelli per Boxoban
-        self._usa_generatore = (griglia_size != (10, 10))
+        # Sorgente livelli: GeneratoreLivelli per curriculum, CaricatoreLivelli per Boxoban.
+        # usa_generatore=True forza il generatore anche su griglia 10x10 (fasi 'generato' v9).
+        # Fallback automatico: qualsiasi griglia != 10x10 usa sempre il generatore.
+        self._usa_generatore = usa_generatore or (griglia_size != (10, 10))
         if self._usa_generatore:
             self._generatore = GeneratoreLivelli(seme=seme)
             self._n_casse = n_casse
@@ -182,6 +201,9 @@ class SokobanEnv(gymnasium.Env):
 
         griglia_precedente = self._griglia.copy()
 
+        # Rileva adiacenza giocatore-cassa PRIMA della mossa (usato da AG-LLM-REW)
+        adiacente_cassa = self._giocatore_adiacente_cassa(griglia_precedente)
+
         # Applica la mossa
         nuova_griglia, mossa_eseguita, cassa_spostata = applica_mossa(
             self._griglia, int(action)
@@ -193,10 +215,13 @@ class SokobanEnv(gymnasium.Env):
         terminated = controlla_vittoria(self._griglia)
         truncated = (self._step_corrente >= self.max_step) and not terminated
 
-        # Calcola reward (con eventuale shaping Manhattan)
+        # Calcola reward (con shaping Manhattan + proximity bonus v9)
+        # adiacente_cassa: True se il giocatore era accanto a una cassa prima della mossa.
+        # Passa il flag a calcola_reward() che applica BONUS_PROXIMITY=+0.05 se True.
         reward = calcola_reward(
             griglia_precedente, self._griglia, terminated,
             scala_manhattan=self.scala_manhattan,
+            adiacente_cassa=adiacente_cassa,
         )
 
         # Rendering automatico in modalita' 'human'
@@ -206,6 +231,7 @@ class SokobanEnv(gymnasium.Env):
         info = self._costruisci_info(
             mossa_eseguita=mossa_eseguita,
             cassa_spostata=cassa_spostata,
+            adiacente_cassa=adiacente_cassa,
         )
         return self._osservazione(), reward, terminated, truncated, info
 
@@ -251,17 +277,47 @@ class SokobanEnv(gymnasium.Env):
             return padding_a_10x10(self._griglia).astype(np.float32)
         return self._griglia.astype(np.float32)
 
+    def _giocatore_adiacente_cassa(self, griglia: np.ndarray) -> bool:
+        """Controlla se il giocatore e' adiacente a una cassa nella griglia fornita.
+
+        Usato da AG-LLM-REW per decidere se chiamare il LLM (~20% degli step).
+        Controlla le 4 celle ortogonali attorno al giocatore.
+
+        Parametri:
+            griglia: griglia da controllare (tipicamente griglia pre-mossa).
+
+        Restituisce:
+            True se almeno una cella adiacente contiene CASSA o CASSA_SU_TARGET.
+        """
+        posizioni = np.argwhere(
+            (griglia == GIOCATORE) | (griglia == GIOCATORE_SU_TARGET)
+        )
+        if len(posizioni) == 0:
+            return False
+        riga_g, col_g = posizioni[0]
+        righe, colonne = griglia.shape
+        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            r, c = riga_g + dr, col_g + dc
+            if 0 <= r < righe and 0 <= c < colonne:
+                if griglia[r, c] in (CASSA, CASSA_SU_TARGET):
+                    return True
+        return False
+
     def _costruisci_info(
-        self, mossa_eseguita: bool, cassa_spostata: bool
+        self,
+        mossa_eseguita: bool,
+        cassa_spostata: bool,
+        adiacente_cassa: bool = False,
     ) -> Dict[str, Any]:
         """Costruisce il dizionario info restituito da reset() e step()."""
         if self._griglia is None:
             return {}
         return {
-            "step_corrente":     self._step_corrente,
-            "casse_su_target":   conta_casse_su_target(self._griglia),
-            "mossa_eseguita":    mossa_eseguita,
-            "cassa_spostata":    cassa_spostata,
+            "step_corrente":              self._step_corrente,
+            "casse_su_target":            conta_casse_su_target(self._griglia),
+            "mossa_eseguita":             mossa_eseguita,
+            "cassa_spostata":             cassa_spostata,
+            "giocatore_adiacente_cassa":  adiacente_cassa,
         }
 
     # ------------------------------------------------------------------
