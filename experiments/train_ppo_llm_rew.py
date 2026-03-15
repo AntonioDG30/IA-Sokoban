@@ -1,11 +1,14 @@
-"""Training AG-LLM-REW: PPO con reward aumentata da LLM su curriculum C0->C5 (v9).
+"""Training AG-LLM-REW: RecurrentPPO con reward aumentata da LLM su curriculum C0->C5 (v10).
 
 Il LLM valuta l'azione eseguita confrontando griglia pre e post mossa.
 Viene chiamato quando il giocatore era adiacente a una cassa (~20% degli step).
-A inference time solo la policy PPO agisce: il LLM non serve piu'.
+A inference time solo la policy RecurrentPPO agisce: il LLM non serve piu'.
+
+Usa RecurrentPPO (CnnLstmPolicy, sb3-contrib) come AG-PPO per confronto equo.
+n_envs=1: Ollama single-threaded, chiamate sequenziali.
 
 Architettura:
-    SokobanEnv -> RicompensaLLM -> Monitor -> PPO (CnnPolicy)
+    SokobanEnv -> RicompensaLLM -> Monitor -> RecurrentPPO (CnnLstmPolicy)
 
 Curriculum v9 (stesso di AG-PPO per confronto equo):
     C0: 1 cassa, griglia generata    (300K step)
@@ -38,7 +41,7 @@ _RADICE = Path(__file__).resolve().parent.parent
 if str(_RADICE) not in sys.path:
     sys.path.insert(0, str(_RADICE))
 
-from stable_baselines3 import PPO
+from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.monitor import Monitor
 
@@ -103,7 +106,7 @@ def addestra_curriculum(seed: int, provider: str, dir_dati: str) -> None:
     print("[AG-LLM-REW] Curriculum v9 — seed=" + str(seed)
           + " | provider=" + provider)
     print("[AG-LLM-REW] LAMBDA_LLM=" + str(LAMBDA_LLM)
-          + " | trigger=adiacente_cassa (~20% step)")
+          + " | trigger=solo_push (~5% step)")
     print("[AG-LLM-REW] n_envs=1 (Ollama single-threaded)")
     print("[AG-LLM-REW] ========================================\n")
 
@@ -111,12 +114,16 @@ def addestra_curriculum(seed: int, provider: str, dir_dati: str) -> None:
     agente = AgenteRicompensaLLM(
         provider=provider,
         lambda_llm=LAMBDA_LLM,
-        solo_adiacente=True,
     )
 
+    # Policy kwargs: CNN custom + LSTM (v10 Option B — stesso di AG-PPO per confronto equo)
     policy_kwargs = dict(
         features_extractor_class=SokobanCNN,
         features_extractor_kwargs=dict(features_dim=256),
+        lstm_hidden_size=256,
+        n_lstm_layers=1,
+        shared_lstm=True,
+        enable_critic_lstm=False,  # richiesto quando shared_lstm=True
     )
 
     modello = None
@@ -144,8 +151,8 @@ def addestra_curriculum(seed: int, provider: str, dir_dati: str) -> None:
         config.pop("verbose", None)
 
         if modello is None:
-            modello = PPO(
-                policy="CnnPolicy",
+            modello = RecurrentPPO(
+                policy="CnnLstmPolicy",
                 env=env_train,
                 seed=seed,
                 tensorboard_log=str(dir_log_rew),

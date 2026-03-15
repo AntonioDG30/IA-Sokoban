@@ -1,4 +1,13 @@
-"""Training AG-PPO con curriculum learning C0->C5 (v9).
+"""Training AG-PPO con curriculum learning C0->C5 (v10).
+
+Usa RecurrentPPO (CnnLstmPolicy, sb3-contrib) invece di PPO plain:
+    - LSTM nascosta 256 unita' permette di ricordare sequenze di azioni precedenti
+    - Cruciale per puzzle Sokoban: pianificare push richiede memoria degli step
+    - Compatible con VecEnv e curriculum learning (set_env() funziona normalmente)
+
+Reward shaping v10 (entrambe le opzioni attive):
+    - Option A: shaping giocatore->cassa (scala_player_box=0.1)
+    - SCALA_MANHATTAN=0.3: shaping casse->target (safe, necessario su livelli infiniti)
 
 Curriculum adattivo in 6 fasi progressive (FASI_CURRICULUM_V9):
     C0: 1 cassa, griglia generata    (600K step base, soglia 15% solve rate)
@@ -8,9 +17,6 @@ Curriculum adattivo in 6 fasi progressive (FASI_CURRICULUM_V9):
     C4: 4 casse, Boxoban medium      (2M step base,   soglia  2%)
     C5: 4 casse, Boxoban unfiltered  (2M step base,   nessuna soglia)
     Totale: ~9.1M step (piu' ripetizioni se la soglia non e' raggiunta)
-
-Curriculum adattivo: se il max solve rate negli ultimi eval e' sotto la soglia,
-la fase viene ripetuta (max MAX_RIPETIZIONI_FASE volte) prima di avanzare.
 
 Uso:
     python experiments/train_ppo.py [--seed 42] [--dir-dati data/boxoban]
@@ -29,7 +35,7 @@ _RADICE = Path(__file__).resolve().parent.parent
 if str(_RADICE) not in sys.path:
     sys.path.insert(0, str(_RADICE))
 
-from stable_baselines3 import PPO
+from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.monitor import Monitor
@@ -67,12 +73,22 @@ SOGLIE_CURRICULUM = {
 MAX_RIPETIZIONI_FASE = 2   # => max 3x budget per fase
 
 
+# Soglia minima per considerare un episodio "risolto" (livello completato).
+# Con reward shaping attivo (SCALA_MANHATTAN=0.3, SCALA_PLAYER_BOX=0.1) la reward
+# puo' essere positiva anche senza completare il livello (shaping su avvicinamento).
+# Soglia 9.0 e' sicura perche':
+#   - Min reward episodio RISOLTO  = 10.0 (BONUS_COMPLETAMENTO) + n_casse - step_penalty >= 9.5
+#   - Max reward episodio NON RISOLTO con shaping < 9.0 (verificato empiricamente)
+# NON usare > 0: con shaping produce falsi positivi (~20% inflate vs ~0% reale).
+_SOGLIA_RISOLTO = 9.0
+
+
 def _leggi_max_solve_rate(dir_eval_logs: Path) -> float:
     """Legge il massimo solve rate (%) dai log di valutazione SB3 (evaluations.npz).
 
     Restituisce 0.0 se il file non esiste o e' corrotto.
-    Il solve rate e' definito come frazione di episodi con reward > 0
-    (equivalente a episodi con almeno un bonus completamento).
+    Usa _SOGLIA_RISOLTO (9.0) per distinguere episodi completati da episodi con
+    solo reward shaping positivo (falsi positivi con threshold > 0).
     """
     npz = dir_eval_logs / "evaluations.npz"
     if not npz.exists():
@@ -80,7 +96,7 @@ def _leggi_max_solve_rate(dir_eval_logs: Path) -> float:
     try:
         d = np.load(str(npz))
         # results shape: (n_eval, n_eval_episodes) — ogni riga e' un evaluation step
-        return float((d["results"] > 0).mean(axis=1).max() * 100)
+        return float((d["results"] >= _SOGLIA_RISOLTO).mean(axis=1).max() * 100)
     except Exception:
         return 0.0
 
@@ -135,10 +151,17 @@ def addestra_curriculum(seed: int, dir_dati: str) -> None:
         # Ambiente di validazione (singolo)
         env_val = Monitor(AggiuntaCanale(crea_env_da_fase(fase, str(dir_dati_path), seed, split="valid")))
 
-        # Policy kwargs: CNN custom
+        # Policy kwargs: CNN custom + LSTM (v10 Option B)
+        # CnnLstmPolicy = SokobanCNN features extractor + LSTM 256 unita'
+        # LSTM permette di ricordare sequenze di azioni: essenziale per Sokoban
+        # (pianificare push richiede memoria degli step precedenti).
         policy_kwargs = dict(
             features_extractor_class=SokobanCNN,
             features_extractor_kwargs=dict(features_dim=256),
+            lstm_hidden_size=256,
+            n_lstm_layers=1,
+            shared_lstm=True,
+            enable_critic_lstm=False,  # richiesto quando shared_lstm=True
         )
 
         # Crea o aggiorna il modello (set_env per fase successiva)
@@ -146,8 +169,8 @@ def addestra_curriculum(seed: int, dir_dati: str) -> None:
         config.pop("verbose", None)
 
         if modello is None:
-            modello = PPO(
-                policy="CnnPolicy",
+            modello = RecurrentPPO(
+                policy="CnnLstmPolicy",
                 env=env_train,
                 seed=seed,
                 tensorboard_log=str(dir_log_ppo),

@@ -82,19 +82,19 @@ class TestStep:
         env.reset(options={"indice_livello": 0})
         # Prima azione: su — il giocatore si sposta senza spingere la cassa
         _, reward, terminated, _, _ = env.step(0)
-        # Reward deve essere -0.01 (nessun cambio casse su target, no vittoria)
+        # Reward deve essere -0.005 (nessun cambio casse su target, no vittoria)
         assert not terminated
-        assert reward == pytest.approx(-0.01, abs=1e-6)
+        assert reward == pytest.approx(-0.005, abs=1e-6)
 
     def test_step_vittoria_reward_positiva(self, env):
-        """Livello 0: @$.  →  azione destra → cassa su target → vittoria."""
+        """Livello 0: @$.  ->  azione destra -> cassa su target -> vittoria."""
         env.reset(options={"indice_livello": 0})
         # Nel livello 0: giocatore in (2,2), cassa in (2,3), target in (2,4)
         # azione destra (3) spinge cassa su target
         _, reward, terminated, _, _ = env.step(3)  # destra
         assert terminated is True
-        # reward = +10 (completamento) + 1 (cassa su target) - 0.01 (step) = 10.99
-        assert reward == pytest.approx(10.99, abs=1e-6)
+        # reward = +10 (completamento) + 1 (cassa su target) - 0.005 (step) = 10.995
+        assert reward == pytest.approx(10.995, abs=1e-6)
 
     def test_step_truncation_dopo_max_step(self):
         """L'episodio viene troncato dopo max_step senza vittoria."""

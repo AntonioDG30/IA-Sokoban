@@ -62,14 +62,21 @@ SOGLIE_CURRICULUM = {
 MAX_RIPETIZIONI_FASE = 2   # => max 3x budget per fase
 
 
+_SOGLIA_RISOLTO = 9.0  # vedi train_ppo.py per spiegazione completa
+
+
 def _leggi_max_solve_rate(dir_eval_logs: Path) -> float:
-    """Legge il massimo solve rate (%) dai log di valutazione SB3."""
+    """Legge il massimo solve rate (%) dai log di valutazione SB3.
+
+    Usa soglia 9.0 per distinguere episodi completati da falsi positivi
+    causati dal reward shaping (SCALA_MANHATTAN + SCALA_PLAYER_BOX).
+    """
     npz = dir_eval_logs / "evaluations.npz"
     if not npz.exists():
         return 0.0
     try:
         d = np.load(str(npz))
-        return float((d["results"] > 0).mean(axis=1).max() * 100)
+        return float((d["results"] >= _SOGLIA_RISOLTO).mean(axis=1).max() * 100)
     except Exception:
         return 0.0
 

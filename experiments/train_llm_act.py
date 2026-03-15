@@ -9,6 +9,8 @@ Uso:
                                         [--dir-dati data/boxoban]
 
 Risultati salvati in models/llm_act/risultati_seed{seed}.json
+Checkpoint per-fase: models/llm_act/checkpoint_seed{seed}.json
+  (consente resume automatico se il processo viene interrotto)
 """
 
 import argparse
@@ -45,6 +47,30 @@ def _parse_args():
 
 
 # ---------------------------------------------------------------------------
+# Checkpoint helpers
+# ---------------------------------------------------------------------------
+
+def _percorso_checkpoint(percorso_out: Path) -> Path:
+    return percorso_out.parent / percorso_out.name.replace("risultati_", "checkpoint_")
+
+
+def _carica_checkpoint(percorso_ckpt: Path) -> dict:
+    """Restituisce dizionario fasi gia' completate, o vuoto se assente."""
+    if percorso_ckpt.exists():
+        try:
+            with open(percorso_ckpt, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _salva_checkpoint(percorso_ckpt: Path, fasi_completate: dict) -> None:
+    with open(percorso_ckpt, "w", encoding="utf-8") as f:
+        json.dump(fasi_completate, f, indent=2, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
 # Valutazione
 # ---------------------------------------------------------------------------
 
@@ -53,6 +79,13 @@ def valuta_tutte_le_fasi(seed: int, provider: str, dir_dati: str) -> None:
     dir_dati_path = Path(dir_dati)
     percorso_out  = percorso_risultati_llm_act(seed)
     percorso_out.parent.mkdir(parents=True, exist_ok=True)
+    percorso_ckpt = _percorso_checkpoint(percorso_out)
+
+    # Resume: carica fasi gia' completate
+    fasi_completate = _carica_checkpoint(percorso_ckpt)
+    if fasi_completate:
+        print("[AG-LLM] Checkpoint trovato — riprendo da fase successiva.")
+        print("[AG-LLM] Fasi gia' completate: " + ", ".join(fasi_completate.keys()))
 
     print("\n[AG-LLM] ========================================")
     print("[AG-LLM] Valutazione curriculum v9 — seed=" + str(seed)
@@ -65,18 +98,33 @@ def valuta_tutte_le_fasi(seed: int, provider: str, dir_dati: str) -> None:
     risultati_globali = {
         "seed":     seed,
         "provider": provider,
-        "fasi":     {},
+        "fasi":     dict(fasi_completate),  # include gia' completate
     }
     t_totale = time.time()
 
     for fase in FASI_CURRICULUM_V9:
-        nome    = fase["nome"]
-        max_s   = fase["max_step"]
+        nome  = fase["nome"]
+        max_s = fase["max_step"]
+
+        # Skip se gia' completata (resume)
+        if nome in fasi_completate:
+            print("[AG-LLM] " + nome + " — gia' completata (skip)")
+            continue
 
         print("\n[AG-LLM] --- Fase: " + nome + " ---")
 
-        # Usa split test per valutazione (generato non ha split, ma split ignorato)
-        env = crea_env_da_fase(fase, str(dir_dati_path), seed, split="test")
+        # Sceglie split corretto per dataset:
+        #   generato           -> "train" (split ignorato dal generatore)
+        #   boxoban_medium     -> "valid" (medium non ha split test)
+        #   boxoban_unfiltered -> "test"
+        _dataset = fase.get("dataset", "generato")
+        if _dataset == "boxoban_medium":
+            _split = "valid"
+        elif _dataset == "boxoban_unfiltered":
+            _split = "test"
+        else:
+            _split = "train"
+        env = crea_env_da_fase(fase, str(dir_dati_path), seed, split=_split)
 
         t0 = time.time()
         metriche = agente.valuta(
@@ -89,7 +137,11 @@ def valuta_tutte_le_fasi(seed: int, provider: str, dir_dati: str) -> None:
         metriche["elapsed_sec"] = round(elapsed, 1)
 
         risultati_globali["fasi"][nome] = metriche
+        fasi_completate[nome] = metriche
         env.close()
+
+        # Salva checkpoint dopo ogni fase
+        _salva_checkpoint(percorso_ckpt, fasi_completate)
 
         print("[AG-LLM] " + nome + " completata in "
               + str(round(elapsed / 60, 1)) + " min")
@@ -97,9 +149,13 @@ def valuta_tutte_le_fasi(seed: int, provider: str, dir_dati: str) -> None:
     elapsed_tot = time.time() - t_totale
     risultati_globali["elapsed_totale_sec"] = round(elapsed_tot, 1)
 
-    # Salva JSON
+    # Salva JSON finale
     with open(percorso_out, "w", encoding="utf-8") as f:
         json.dump(risultati_globali, f, indent=2, ensure_ascii=False)
+
+    # Rimuove checkpoint (completato)
+    if percorso_ckpt.exists():
+        percorso_ckpt.unlink()
 
     print("\n[AG-LLM] ========================================")
     print("[AG-LLM] Valutazione completata in "

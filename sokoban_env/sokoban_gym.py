@@ -25,6 +25,7 @@ Parametri costruttore:
                        Se != (10,10) usa GeneratoreLivelli (curriculum).
     n_casse            numero di casse (solo per griglia_size != 10x10).
     scala_manhattan    fattore scala reward shaping Manhattan (0.0 = off).
+    scala_player_box   fattore scala reward shaping giocatore->cassa (0.0 = off). [v10]
 """
 
 from typing import Any, Dict, Optional, Tuple
@@ -72,6 +73,7 @@ class SokobanEnv(gymnasium.Env):
         griglia_size: Tuple[int, int] = (10, 10),
         n_casse: int = 4,
         scala_manhattan: float = 0.0,
+        scala_player_box: float = 0.0,
         usa_generatore: bool = False,
     ):
         """Crea l'ambiente Sokoban.
@@ -86,6 +88,7 @@ class SokobanEnv(gymnasium.Env):
             griglia_size:      (righe, colonne). Default (10, 10).
             n_casse:           numero casse (solo curriculum generato).
             scala_manhattan:   fattore reward shaping Manhattan. 0.0 = off.
+            scala_player_box:  fattore reward shaping giocatore->cassa. 0.0 = off. [v10]
             usa_generatore:    True = usa GeneratoreLivelli anche su griglia 10x10.
                                Necessario per fasi curriculum 'generato' con griglie fisse.
         """
@@ -102,6 +105,7 @@ class SokobanEnv(gymnasium.Env):
         self.max_step = max_step
         self.griglia_size = griglia_size
         self.scala_manhattan = scala_manhattan
+        self.scala_player_box = scala_player_box
 
         # Spazio di osservazione: sempre 10x10 float32 (con padding per griglie piu' piccole).
         # high=7.0 perche' il valore di padding e' 7 (distinto da MURO=0 e celle 1-6).
@@ -215,13 +219,12 @@ class SokobanEnv(gymnasium.Env):
         terminated = controlla_vittoria(self._griglia)
         truncated = (self._step_corrente >= self.max_step) and not terminated
 
-        # Calcola reward (con shaping Manhattan + proximity bonus v9)
-        # adiacente_cassa: True se il giocatore era accanto a una cassa prima della mossa.
-        # Passa il flag a calcola_reward() che applica BONUS_PROXIMITY=+0.05 se True.
+        # Calcola reward (con shaping Manhattan v9 + player->box shaping v10)
         reward = calcola_reward(
             griglia_precedente, self._griglia, terminated,
             scala_manhattan=self.scala_manhattan,
             adiacente_cassa=adiacente_cassa,
+            scala_player_box=self.scala_player_box,
         )
 
         # Rendering automatico in modalita' 'human'
@@ -337,5 +340,6 @@ class SokobanEnv(gymnasium.Env):
             f"griglia={self.griglia_size}, "
             f"step={self._step_corrente}/{self.max_step}, "
             f"manhattan={self.scala_manhattan}, "
+            f"player_box={self.scala_player_box}, "
             f"render_mode={self.render_mode!r})"
         )

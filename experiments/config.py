@@ -85,20 +85,24 @@ FASI_CURRICULUM_V9 = [
         "ent_coef":       0.02,
     },
     # C4: 4 casse Boxoban medium — dataset eterogeneo, budget aumentato.
+    # split="valid": medium non ha cartella test/, solo train/ e valid/
     {
         "nome":           "C4-4box-medium",
         "n_casse":        4,
         "dataset":        "boxoban_medium",
+        "split":          "valid",
         "timestep_ppo":   2_000_000,
         "timestep_dqn":   1_200_000,
         "max_step":       300,
         "ent_coef":       0.03,
     },
     # C5: 4 casse Boxoban unfiltered — benchmark finale.
+    # split="test": unfiltered ha train/, valid/ e test/
     {
         "nome":           "C5-4box-unfiltered",
         "n_casse":        4,
         "dataset":        "boxoban_unfiltered",
+        "split":          "test",
         "timestep_ppo":   2_000_000,
         "timestep_dqn":   1_300_000,
         "max_step":       300,
@@ -114,9 +118,14 @@ TIMESTEPS_TOTALI_DQN = sum(f["timestep_dqn"] for f in FASI_CURRICULUM_V9)  # 6_0
 # ---------------------------------------------------------------------------
 
 GRIGLIA_SIZE    = (10, 10)   # fissa per tutto il progetto
-SCALA_MANHATTAN = 2.0        # v9: reward shaping Manhattan aumentato da 1.5 -> 2.0
-                              # Gradiente piu' forte verso i target per compensare
-                              # la maggiore difficolta' dei livelli 10x10 reali.
+SCALA_MANHATTAN = 0.3        # v10b: ripristinato (0.3 originale DEC-014, SAFE e necessario).
+SCALA_PLAYER_BOX = 0.1       # v10 Option A: shaping giocatore->cassa (delta-based, sicuro).
+                              # BONUS_PROXIMITY=0.05 era il vero hacker in v9 (sempre-on,
+                              # +6/ep senza muovere casse). SCALA_MANHATTAN a 0.3 e' sicuro:
+                              # completare da sempre piu' reward che non completare perche'
+                              # la shaping si accumula solo avvicinandosi (delta-distanza),
+                              # oscillare da net=0, e completare aggiunge +10+n_casse gratis.
+                              # Senza shaping su livelli infiniti il gradiente e' troppo sparso.
 
 # Set di valutazione finale (usato da evaluate_all.py)
 # Ogni agente viene valutato su tutti i livelli di tutte le fasi + questi set extra
@@ -219,6 +228,14 @@ def percorso_modello_llm_rew(seed: int) -> Path:
     """Checkpoint AG-LLM-REW (PPO con reward LLM)."""
     return DIR_MODELLI / "llm_rew" / f"llm_rew_seed{seed}"
 
+def percorso_modello_llm_guide(seed: int) -> Path:
+    """Checkpoint AG-LLM-GUIDE (DQN addestrato via LfD con demo LLM).
+
+    A inference time il LLM non serve: solo il DQN agisce.
+    Corrisponde alla variante confermata dalla mail del professore.
+    """
+    return DIR_MODELLI / "llm_guide" / f"llm_guide_seed{seed}"
+
 # ---------------------------------------------------------------------------
 # Helper: crea SokobanEnv dalla configurazione di una fase
 # ---------------------------------------------------------------------------
@@ -252,6 +269,7 @@ def crea_env_da_fase(fase: dict, dir_dati: str, seme: int, split: str = "train")
             griglia_size=griglia,
             n_casse=n_casse,
             scala_manhattan=SCALA_MANHATTAN,
+            scala_player_box=SCALA_PLAYER_BOX,
             max_step=max_step,
             seme=seme,
             usa_generatore=True,
@@ -264,6 +282,7 @@ def crea_env_da_fase(fase: dict, dir_dati: str, seme: int, split: str = "train")
             griglia_size=griglia,
             n_casse=n_casse,
             scala_manhattan=SCALA_MANHATTAN,
+            scala_player_box=SCALA_PLAYER_BOX,
             max_step=max_step,
             seme=seme,
         )
@@ -275,6 +294,7 @@ def crea_env_da_fase(fase: dict, dir_dati: str, seme: int, split: str = "train")
             griglia_size=griglia,
             n_casse=n_casse,
             scala_manhattan=SCALA_MANHATTAN,
+            scala_player_box=SCALA_PLAYER_BOX,
             max_step=max_step,
             seme=seme,
         )
