@@ -58,3 +58,7 @@ Thumbs.db
 .coverage
 htmlcov/
 .claude/worktrees/magical-kowalevski
+docs/dispensa_struttura_repo.pdf
+docs/dispensa_teoria.pdf
+docs/dispensa_fonti.pdf
+.gitignore

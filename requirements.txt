@@ -1,22 +1,14 @@
 # Core
-gymnasium>=0.29
-pygame>=2.5
-numpy>=1.24
+gymnasium>=1.2
+pygame>=2.6
+numpy>=2.0
 scipy>=1.10
 
 # RL
 torch>=2.0
-stable-baselines3>=2.0
-tensorboard
-
-# LLM
-openai>=1.0
-
-# Analisi e grafici
-matplotlib
-seaborn
-pandas
+stable-baselines3>=2.7
+sb3-contrib>=2.7
+tensorboard>=2.0
 
 # Test
-pytest
-pytest-cov
+pytest>=9.0
