@@ -94,6 +94,11 @@ def _carica_best_o_finale(cls, base_dir: Path, nome_fase: str, fallback: Path):
 # ---------------------------------------------------------------------------
 
 def _parse_args():
+    """Legge gli argomenti da riga di comando.
+
+    Restituisce:
+        Namespace con seed (int), dir_dati (str), provider (str) e no_llm (bool).
+    """
     p = argparse.ArgumentParser(description="Valutazione comparativa tutti gli agenti")
     p.add_argument("--seed",     type=int, default=42,              help="Seed fisso")
     p.add_argument("--dir-dati", type=str, default=str(DIR_DATI),   help="Path data/boxoban")
@@ -149,6 +154,17 @@ def _valuta_rl(modello, env, n_episodi: int) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def valuta_tutti(seed: int, dir_dati: str, provider: str, no_llm: bool) -> None:
+    """Valuta i 5 agenti su tutte le fasi curriculum C0->C5 e sui set extra.
+
+    Carica il best model per ogni fase (evita catastrophic forgetting).
+    Salva risultati in docs/report/risultati_comparativi_seed{seed}.json.
+
+    Parametri:
+        seed:     seed usato durante il training, per trovare i modelli salvati.
+        dir_dati: percorso alla directory data/boxoban/.
+        provider: provider LLM per valutazione live AG-LLM se JSON non trovato.
+        no_llm:   se True, salta AG-LLM e AG-LLM-REW (utile prima del training LLM).
+    """
     dir_dati_path = Path(dir_dati)
     DIR_RISULTATI.mkdir(parents=True, exist_ok=True)
 

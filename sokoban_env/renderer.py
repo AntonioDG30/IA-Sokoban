@@ -1,11 +1,8 @@
-"""Rendering grafico dell'ambiente Sokoban tramite Pygame.
+"""Rendering Sokoban tramite Pygame, con inizializzazione lazy al primo frame.
 
-Supporta due modalità:
-    'human'     — finestra interattiva a schermo.
-    'rgb_array' — restituisce un array NumPy (H, W, 3) per VecEnv/recording.
-
-Il modulo gestisce l'inizializzazione lazy di Pygame e può funzionare in
-ambienti headless impostando SDL_VIDEODRIVER=dummy prima dell'import.
+Modalita' 'human': apre una finestra a schermo, utile per demo e debug manuale.
+Modalita' 'rgb_array': restituisce un array (H, W, 3) senza finestra, comodo
+per registrare video o lavorare in ambienti headless (SDL_VIDEODRIVER=dummy).
 """
 
 import os

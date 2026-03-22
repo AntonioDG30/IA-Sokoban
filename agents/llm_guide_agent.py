@@ -1,31 +1,22 @@
-"""Agente AG-LLM-GUIDE: LLM raccoglie dimostrazioni -> DQN impara da esse (LfD).
+"""Agente AG-LLM-GUIDE: il LLM raccoglie dimostrazioni, il DQN impara da esse (LfD).
 
-Implementazione fedele alla risposta del professore (2026-03-06):
-    "durante il training dell'agente di RL si ha che l'LLM decide l'azione
-     che sara' poi eseguita dal RL, una sorta di 'aiutante' per tutto
-     l'addestramento"
+Implementazione di Learning from Demonstrations (LfD) con LLM come teacher:
+    Fase 1 — RACCOLTA: il LLM gioca N episodi per fase, salvando le transizioni
+              (obs, azione, reward, next_obs, done) in formato (1,10,10).
+    Fase 2 — PRE-FILL: le transizioni vengono caricate nel replay buffer del DQN
+              tramite riempi_replay_buffer() prima di avviare learn().
+    Fase 3 — TRAINING DQN: il DQN apprende sia dalle demo LLM (nel buffer)
+              sia dalla propria esperienza generata durante il training.
 
-Flusso per ogni fase del curriculum C0->C5:
-    1. RACCOLTA DEMO: il LLM agisce come policy su N episodi, salvando
-       le transizioni (obs, action, reward, next_obs, done).
-       L'osservazione e' in formato (1,10,10) — compatibile con DQN CnnPolicy.
-    2. PRE-FILL BUFFER: le transizioni LLM vengono caricate nel replay buffer
-       del DQN prima dell'addestramento RL (tramite riempi_replay_buffer()).
-    3. TRAINING DQN: l'agente DQN apprende sia dalle demo LLM (gia' nel buffer)
-       sia dalla propria esperienza generata durante il training.
+A inference time il LLM non serve: solo il DQN decide le azioni.
 
-A inference time il LLM non serve piu': solo il DQN decide le azioni.
-
-Distinzione con gli altri agenti LLM del progetto:
+Il funzionamento e' diverso dagli altri agenti LLM del progetto:
     - AG-LLM (llm_act_agent.py):  LLM agisce a inference time, nessun RL.
-                                   Corrisponde alla traccia PDF ("genera l'azione
-                                   ogni turno").
-    - AG-LLM-GUIDE (questo file): LLM guida il training RL via LfD, DQN agisce
-                                   a inference time. Corrisponde alla mail prof.
-    - AG-LLM-REW (llm_reward_agent.py): RL agisce, LLM valuta la reward.
+    - AG-LLM-GUIDE (questo file): LLM guida il training, DQN agisce a inference.
+    - AG-LLM-REW (llm_reward_agent.py): RL agisce, LLM valuta la qualita' della mossa.
 
-Riferimento tecnico:
-    DQfD (Deep Q-learning from Demonstrations), Hester et al. (2018).
+Riferimento:
+    Hester et al. (2018), Deep Q-learning from Demonstrations (DQfD).
     https://arxiv.org/abs/1704.03732
 """
 
@@ -50,38 +41,41 @@ from llm_integration.sokoban_prompt import (
     NOMI_AZIONI,
 )
 
-# Tipo alias: una transizione (obs_1c, azione, reward, next_obs_1c, done)
-# dove obs_1c ha shape (1,10,10) — gia' formato DQN CnnPolicy channels-first.
+# Tipo alias per una singola transizione: obs (1,10,10), azione, reward, next_obs, done
 Transizione = Tuple[np.ndarray, int, float, np.ndarray, bool]
 
 
 class AgenteAgLLMGuide:
-    """Agente AG-LLM-GUIDE: LfD con LLM come guida e DQN come policy finale.
+    """Agente AG-LLM-GUIDE: LfD con LLM come teacher e DQN come policy finale.
 
     Parametri:
-        provider: provider LLM ('ollama' | 'groq' | 'mistral').
-        seme:     seed per riproducibilita' (usato per reset env).
+        seme: seed per la riproducibilita' (passato al reset dell'ambiente).
     """
 
     def __init__(self, provider: str = "ollama", seme: int = 42) -> None:
-        self.provider = provider
-        self.seme = seme
+        self.seme   = seme
         self.client = ClienteLLM(provider=provider)
 
     # ------------------------------------------------------------------
-    # Helper: estrazione coordinate esplicite (identica ad AgenteAgLLM)
-    # Aiuta il LLM a ragionare spazialmente sulla griglia.
+    # Estrazione coordinate esplicite per arricchire il prompt LLM
     # ------------------------------------------------------------------
 
     @staticmethod
     def _estrai_posizioni(obs_2d: np.ndarray) -> str:
-        """Converte obs (10,10) in stringa con coordinate esplicite 1-indexed.
+        """Converte l'obs (10,10) in una stringa con coordinate 1-indexed.
 
-        Formato: 'Giocatore: riga R, colonna C | Cassa 1: riga R, colonna C | ...'
-        Ignora celle di padding (valore 7).
+        Le coordinate esplicite aiutano il LLM a ragionare spazialmente
+        senza dover interpretare la griglia ASCII pura. Le celle di
+        padding (valore 7) vengono ignorate.
+
+        Formato output: 'Giocatore: riga R, colonna C | Cassa 1: riga R, colonna C | ...'
+
+        Parametri:
+            obs_2d: array float32 di forma (10, 10).
         """
         grid = np.round(obs_2d).astype(int)
-        # 5=GIOCATORE, 6=GIOCATORE_SU_TARGET
+
+        # Valori corrispondenti: 5=GIOCATORE, 6=GIOCATORE_SU_TARGET
         player_pos = np.argwhere((grid == 5) | (grid == 6))
         # 3=CASSA, 4=CASSA_SU_TARGET
         box_pos    = np.argwhere((grid == 3) | (grid == 4))
@@ -105,7 +99,7 @@ class AgenteAgLLMGuide:
         return " | ".join(parti)
 
     # ------------------------------------------------------------------
-    # Fase 1: raccolta demo LLM
+    # Fase 1: raccolta dimostrazioni LLM
     # ------------------------------------------------------------------
 
     def raccoglie_demo_fase(
@@ -115,45 +109,45 @@ class AgenteAgLLMGuide:
         max_step: int,
         nome_fase: str = "",
     ) -> List[List[Transizione]]:
-        """Raccoglie demo LLM su n_episodi per una fase del curriculum.
+        """Raccoglie dimostrazioni LLM per una fase del curriculum.
 
-        Il LLM agisce come policy osservando griglia ASCII + coordinate esplicite
-        + storico ultime 5 mosse (anti-loop).
-
-        L'env deve essere gia' avvolto con AggiuntaCanale in modo che le
-        osservazioni abbiano shape (1,10,10) — compatibili con il replay buffer
-        DQN CnnPolicy. Il LLM utilizza obs[0] (shape 10,10) per i prompt.
+        Il LLM agisce come policy per n_episodi, osservando la griglia ASCII,
+        le coordinate esplicite e le ultime 5 mosse (per ridurre i loop). Le
+        transizioni vengono salvate in formato (1,10,10) per compatibilita' con
+        il replay buffer di DQN CnnPolicy. L'env deve essere gia' avvolto con
+        AggiuntaCanale.
 
         Parametri:
-            env:        SokobanEnv gia' wrappato con AggiuntaCanale.
-            n_episodi:  numero di episodi da raccogliere.
-            max_step:   limite di step per episodio (per il prompt "step rimasti").
-            nome_fase:  nome della fase per il logging.
+            env:       SokobanEnv avvolto con AggiuntaCanale (obs shape: 1,10,10).
+            n_episodi: numero di episodi da raccogliere.
+            max_step:  limite di step per episodio (per il contatore nel prompt).
+            nome_fase: nome della fase per il logging.
 
-        Restituisce lista di episodi, ciascuno lista di Transizioni.
-        Ogni Transizione = (obs_1c, azione, reward, next_obs_1c, done)
-        con obs_1c shape (1,10,10).
+        Restituisce:
+            Lista di episodi; ogni episodio e' una lista di Transizioni
+            (obs_1c, azione, reward, next_obs_1c, done) con obs_1c (1,10,10).
         """
         episodi: List[List[Transizione]] = []
         n_risolti = 0
         t0 = time.time()
 
         for i_ep in range(n_episodi):
-            obs_1c, _ = env.reset()          # shape (1,10,10)
+            obs_1c, _ = env.reset()         # shape (1,10,10)
             episodio: List[Transizione] = []
 
-            # Storico ultime N mosse (anti-loop: il LLM lo riceve nel prompt)
+            # Storico delle ultime 5 mosse: riduce i loop (es. su->giu->su->giu...)
             storico_mosse: Deque[str] = deque(maxlen=5)
             step_ep = 0
 
             while True:
-                # Il LLM usa la griglia 2D (10,10) — squeezia il canale
+                # Il LLM lavora sulla griglia 2D (squeeze del canale)
                 obs_2d = obs_1c[0]
 
-                grid_text  = griglia_a_testo(obs_2d)
+                grid_text       = griglia_a_testo(obs_2d)
                 casse_su_tgt, n_casse = conta_casse(obs_2d)
-                posizioni  = self._estrai_posizioni(obs_2d)
+                posizioni       = self._estrai_posizioni(obs_2d)
 
+                # Aggiunge lo storico mosse al campo posizioni del prompt
                 if storico_mosse:
                     posizioni += " | Ultime mosse: " + " ".join(storico_mosse)
 
@@ -173,7 +167,7 @@ class AgenteAgLLMGuide:
                 next_obs_1c, reward, terminated, truncated, _ = env.step(azione)
                 done = terminated or truncated
 
-                # Salva transizione con obs in formato (1,10,10)
+                # Salva la transizione con obs in formato (1,10,10) per il replay buffer DQN
                 episodio.append(
                     (obs_1c, azione, float(reward), next_obs_1c, done)
                 )
@@ -197,8 +191,8 @@ class AgenteAgLLMGuide:
                 )
 
         elapsed_tot = time.time() - t0
-        n_trans = sum(len(ep) for ep in episodi)
-        solve_pct = round(n_risolti / n_episodi * 100, 1)
+        n_trans     = sum(len(ep) for ep in episodi)
+        solve_pct   = round(n_risolti / n_episodi * 100, 1)
         print(
             "[AG-LLM-GUIDE] Demo " + (nome_fase + " " if nome_fase else "")
             + "completate: " + str(n_episodi) + " episodi | "
@@ -209,44 +203,43 @@ class AgenteAgLLMGuide:
         return episodi
 
     # ------------------------------------------------------------------
-    # Fase 2: pre-fill replay buffer DQN con demo LLM
+    # Fase 2: pre-caricamento del replay buffer DQN con le demo LLM
     # ------------------------------------------------------------------
 
     @staticmethod
     def riempi_replay_buffer(modello_dqn, episodi: List[List[Transizione]]) -> int:
         """Carica le transizioni LLM nel replay buffer del modello DQN.
 
-        Deve essere chiamato DOPO la creazione del modello DQN (replay_buffer
-        deve esistere) e PRIMA di learn() per far si' che il DQN inizi
-        ad apprendere dalle demo LLM fin dal primo update.
+        Deve essere chiamato dopo la creazione del modello DQN e prima di
+        learn(). In questo modo il DQN inizia ad aggiornarsi anche sulle demo
+        LLM fin dal primo mini-batch, non solo sulla propria esperienza.
 
-        Il replay buffer SB3 per n_envs=1 attende obs di shape
-        (n_envs, *obs_shape) = (1, 1, 10, 10). Le transizioni raccolte
-        hanno obs_1c di shape (1,10,10), quindi si aggiunge la dimensione
-        batch con np.expand_dims(obs_1c, axis=0).
+        Il replay buffer SB3 con n_envs=1 si aspetta obs di shape (1,1,10,10):
+        le transizioni raccolte hanno obs shape (1,10,10), quindi si aggiunge
+        la dimensione batch con np.expand_dims prima di chiamare buf.add().
 
         Parametri:
-            modello_dqn: modello DQN SB3 gia' creato.
-            episodi:     lista di episodi da raccoglie_demo_fase().
+            modello_dqn: modello DQN SB3 gia' creato (replay_buffer deve esistere).
+            episodi:     lista di episodi restituita da raccoglie_demo_fase().
 
-        Restituisce il numero di transizioni caricate nel buffer.
+        Restituisce:
+            Numero totale di transizioni caricate nel buffer.
         """
         n_caricate = 0
-        buf = modello_dqn.replay_buffer
+        buf        = modello_dqn.replay_buffer
 
         for episodio in episodi:
             for obs_1c, azione, reward, next_obs_1c, done in episodio:
-                # SB3 replay buffer add() si aspetta shape (n_envs, *obs_shape)
-                # n_envs=1, obs_shape=(1,10,10) -> shape richiesta: (1,1,10,10)
+                # SB3 si aspetta shape (n_envs, *obs_shape) = (1, 1, 10, 10)
                 obs_buf      = np.expand_dims(obs_1c, axis=0)
                 next_obs_buf = np.expand_dims(next_obs_1c, axis=0)
 
                 buf.add(
                     obs=obs_buf,
                     next_obs=next_obs_buf,
-                    action=np.array([[azione]]),          # shape (1,1)
-                    reward=np.array([[reward]]),           # shape (1,1)
-                    done=np.array([[done]]),               # shape (1,1)
+                    action=np.array([[azione]]),   # shape (1, 1)
+                    reward=np.array([[reward]]),   # shape (1, 1)
+                    done=np.array([[done]]),        # shape (1, 1)
                     infos=[{}],
                 )
                 n_caricate += 1

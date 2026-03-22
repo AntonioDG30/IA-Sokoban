@@ -158,18 +158,43 @@ PROVIDER_DEFAULT = "ollama"
 # ---------------------------------------------------------------------------
 
 def percorso_ppo_7x7(seed: int) -> Path:
+    """Restituisce il path del modello PPO finale per il seed dato (senza .zip).
+
+    Parametri:
+        seed: seed usato durante il training
+    """
     return DIR_MODELLI_7x7 / "ppo" / f"ppo_7x7_seed{seed}"
 
 def percorso_dqn_7x7(seed: int) -> Path:
+    """Restituisce il path del modello DQN finale per il seed dato (senza .zip).
+
+    Parametri:
+        seed: seed usato durante il training
+    """
     return DIR_MODELLI_7x7 / "dqn" / f"dqn_7x7_seed{seed}"
 
 def percorso_llm_act_7x7(seed: int) -> Path:
+    """Restituisce il path del JSON risultati AG-LLM-ACT per il seed dato.
+
+    Parametri:
+        seed: seed usato durante la valutazione
+    """
     return DIR_MODELLI_7x7 / "llm_act" / f"risultati_7x7_seed{seed}.json"
 
 def percorso_llm_guide_7x7(seed: int) -> Path:
+    """Restituisce il path del modello LLM-GUIDE finale per il seed dato (senza .zip).
+
+    Parametri:
+        seed: seed usato durante il training
+    """
     return DIR_MODELLI_7x7 / "llm_guide" / f"llm_guide_7x7_seed{seed}"
 
 def percorso_llm_rew_7x7(seed: int) -> Path:
+    """Restituisce il path del modello LLM-REW finale per il seed dato (senza .zip).
+
+    Parametri:
+        seed: seed usato durante il training
+    """
     return DIR_MODELLI_7x7 / "llm_rew" / f"llm_rew_7x7_seed{seed}"
 
 # ---------------------------------------------------------------------------

@@ -66,6 +66,11 @@ from sokoban_env.cnn_wrapper import AggiuntaCanale
 # ---------------------------------------------------------------------------
 
 def _parse_args():
+    """Legge gli argomenti da riga di comando.
+
+    Restituisce:
+        Namespace con seed (int), provider (str) e dir_dati (str percorso a data/boxoban).
+    """
     p = argparse.ArgumentParser(description="Training AG-LLM-REW curriculum v9")
     p.add_argument("--seed",     type=int, default=42,              help="Seed fisso")
     p.add_argument("--provider", type=str, default=PROVIDER_DEFAULT, help="Provider LLM")

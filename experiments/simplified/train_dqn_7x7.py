@@ -76,6 +76,11 @@ def _leggi_max_solve_rate(dir_eval_logs: Path) -> float:
 # ---------------------------------------------------------------------------
 
 def _parse_args():
+    """Legge il seed dalla riga di comando (default: 42 per riproducibilita').
+
+    Restituisce:
+        namespace argparse con attributo seed
+    """
     p = argparse.ArgumentParser(description="Training AG-DQN curriculum 7x7")
     p.add_argument("--seed", type=int, default=42, help="Seed fisso")
     return p.parse_args()

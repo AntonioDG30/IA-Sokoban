@@ -106,6 +106,11 @@ def _leggi_max_solve_rate(dir_eval_logs: Path) -> float:
 # ---------------------------------------------------------------------------
 
 def _parse_args():
+    """Legge gli argomenti da riga di comando.
+
+    Restituisce:
+        Namespace con seed (int) e dir_dati (str percorso a data/boxoban).
+    """
     p = argparse.ArgumentParser(description="Training AG-PPO curriculum v9")
     p.add_argument("--seed",     type=int, default=42,           help="Seed fisso")
     p.add_argument("--dir-dati", type=str, default=str(DIR_DATI), help="Path data/boxoban")
@@ -117,7 +122,17 @@ def _parse_args():
 # ---------------------------------------------------------------------------
 
 def addestra_curriculum(seed: int, dir_dati: str) -> None:
-    """Addestra AG-PPO con curriculum completo C0->C5."""
+    """Addestra AG-PPO con curriculum adattivo completo C0->C5.
+
+    Per ogni fase crea un nuovo VecEnv, aggiorna il modello RecurrentPPO
+    (o lo crea alla prima fase) e ripete la fase fino a MAX_RIPETIZIONI_FASE
+    volte se la soglia solve rate non e' raggiunta. Salva il modello finale
+    in models/ppo/ppo_seed{seed}.zip.
+
+    Parametri:
+        seed:     seed per la riproducibilita' del training e della generazione livelli.
+        dir_dati: percorso alla directory data/boxoban/ contenente i dataset Boxoban.
+    """
     dir_dati_path = Path(dir_dati)
     dir_modello   = percorso_modello_ppo(seed).parent
     dir_log_ppo   = DIR_LOG / "ppo" / f"seed{seed}"

@@ -97,6 +97,14 @@ def _carica_best_o_finale(cls, base_dir: Path, nome_fase: str, fallback: Path):
 # ---------------------------------------------------------------------------
 
 def _parse_args():
+    """Legge seed, provider LLM e flag --no-llm dalla riga di comando.
+
+    --no-llm e' utile quando i modelli LLM-REW e LLM-ACT non sono ancora stati
+    addestrati/valutati: cosi' si puo' vedere gia' il confronto PPO vs DQN vs LLM-GUIDE.
+
+    Restituisce:
+        namespace argparse con attributi seed, provider, no_llm
+    """
     p = argparse.ArgumentParser(description="Valutazione comparativa tutti gli agenti 7x7")
     p.add_argument("--seed",     type=int, default=42,              help="Seed fisso")
     p.add_argument("--provider", type=str, default=PROVIDER_DEFAULT, help="Provider LLM")
@@ -110,7 +118,18 @@ def _parse_args():
 # ---------------------------------------------------------------------------
 
 def _valuta_rl(modello, env, n_episodi: int) -> Dict[str, Any]:
-    """Valuta un modello SB3 (PPO o DQN) su n_episodi. Restituisce metriche."""
+    """Valuta un modello SB3 (PPO o DQN) su n_episodi e raccoglie le metriche.
+
+    Usa predict(deterministic=True) per la valutazione finale: la policy
+    non esplora ma sceglie sempre l'azione con la stima Q/valore piu' alta.
+
+    Parametri:
+        modello:   modello SB3 gia' caricato (PPO o DQN)
+        env:       ambiente di valutazione (Monitor+AggiuntaCanale+SokobanEnv7x7)
+        n_episodi: numero di episodi su cui fare la media
+    Restituisce:
+        dizionario con solve_rate, mosse_medie, reward_cumulativa, casse_su_target
+    """
     n_risolti = 0
     mosse_risolti = []
     rewards = []
@@ -151,6 +170,16 @@ def _valuta_rl(modello, env, n_episodi: int) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def valuta_tutti(seed: int, provider: str, no_llm: bool) -> None:
+    """Valuta tutti gli agenti su curriculum 7x7 e salva i risultati in JSON.
+
+    Carica il best model per ogni agente/fase (evita il catastrophic forgetting
+    del modello finale). Per AG-LLM-ACT legge il JSON pre-calcolato se esiste.
+
+    Parametri:
+        seed:     seed usato durante il training (per caricare i modelli corretti)
+        provider: provider LLM per AG-LLM-ACT live (solo se JSON non presente)
+        no_llm:   se True salta AG-LLM-ACT e AG-LLM-REW
+    """
     DIR_RISULTATI_7x7.mkdir(parents=True, exist_ok=True)
 
     print("\n[evaluate_7x7] ========================================")

@@ -1,15 +1,12 @@
-"""Agente PPO (Proximal Policy Optimization) per Sokoban.
+"""Agente AG-PPO: Proximal Policy Optimization su Sokoban.
 
-Wrapper attorno a Stable Baselines 3 che gestisce:
-- Creazione e configurazione del modello PPO con MlpPolicy
-- Training con logging su TensorBoard
-- Callback per valutazione periodica e salvataggio checkpoint
-- Valutazione con metriche (solve rate, mosse medie, reward cumulativa)
-- Salvataggio e caricamento checkpoint
+Wrapper attorno a RecurrentPPO di Stable Baselines 3 (sb3-contrib) con
+SokobanCNN come estrattore di feature. Gestisce il ciclo completo:
+creazione ambiente vettorizzato, training, valutazione periodica, checkpoint.
 
-Riferimenti:
-    - SB3 PPO: https://stable-baselines3.readthedocs.io/en/master/modules/ppo.html
-    - Paper PPO: Schulman et al. (2017), arXiv:1707.06347
+Riferimento:
+    Schulman et al. (2017), Proximal Policy Optimization Algorithms.
+    https://arxiv.org/abs/1707.06347
 """
 
 import os
@@ -37,10 +34,17 @@ def _crea_env(
     max_step: int,
     render_mode: Optional[str] = None,
 ) -> Monitor:
-    """Factory che crea un SokobanEnv avvolto in Monitor.
+    """Crea un SokobanEnv avvolto in Monitor per la raccolta delle metriche.
 
-    Monitor registra le metriche episodiche (reward, lunghezza) in formato
-    compatibile con SB3 e TensorBoard.
+    Monitor registra reward e lunghezza di ogni episodio in formato compatibile
+    con SB3 e TensorBoard. Usato sia per training che per valutazione.
+
+    Parametri:
+        directory_livelli: percorso a data/boxoban/ (None per livelli builtin).
+        difficolta:        'unfiltered' | 'medium' | 'hard'.
+        split:             'train' | 'valid' | 'test'.
+        max_step:          limite di step per episodio.
+        render_mode:       None | 'human' | 'rgb_array'.
     """
     env = SokobanEnv(
         directory_livelli=directory_livelli,
@@ -53,15 +57,15 @@ def _crea_env(
 
 
 class AgentePPO:
-    """Wrapper SB3-PPO per l'addestramento e la valutazione su Sokoban.
+    """Wrapper SB3-PPO per il training e la valutazione su Sokoban.
 
     Parametri:
-        config_ppo:        dizionario con i parametri PPO (da experiments/config.py).
-        directory_livelli: percorso alla directory dei dati Boxoban.
-        difficolta:        'unfiltered', 'medium', 'hard'.
+        config_ppo:        dizionario con gli iperparametri PPO (da experiments/config.py).
+        directory_livelli: percorso a data/boxoban/.
+        difficolta:        difficolta' del dataset Boxoban da usare.
         max_step:          step massimi per episodio.
         n_envs:            numero di ambienti paralleli per il training.
-        seme:              seme per la riproducibilità.
+        seme:              seed per la riproducibilita'.
     """
 
     def __init__(
@@ -73,12 +77,12 @@ class AgentePPO:
         n_envs: int = 4,
         seme: int = 42,
     ):
-        self.config_ppo = config_ppo
+        self.config_ppo        = config_ppo
         self.directory_livelli = directory_livelli
-        self.difficolta = difficolta
-        self.max_step = max_step
-        self.n_envs = n_envs
-        self.seme = seme
+        self.difficolta        = difficolta
+        self.max_step          = max_step
+        self.n_envs            = n_envs
+        self.seme              = seme
         self.modello: Optional[PPO] = None
         self._env_train: Optional[VecEnv] = None
 
@@ -87,16 +91,19 @@ class AgentePPO:
     # ------------------------------------------------------------------
 
     def _costruisci_env_train(self) -> VecEnv:
-        """Costruisce l'ambiente di training (VecEnv con n_envs paralleli)."""
+        """Crea il VecEnv di training con n_envs ambienti paralleli.
+
+        make_vec_env gestisce automaticamente la parallelizzazione tramite
+        SubprocVecEnv o DummyVecEnv in base alla piattaforma.
+        """
         def _factory():
             return _crea_env(
                 self.directory_livelli, self.difficolta, "train", self.max_step
             )
-
         return make_vec_env(_factory, n_envs=self.n_envs, seed=self.seme)
 
     def _costruisci_env_val(self) -> Monitor:
-        """Costruisce l'ambiente di validazione (singolo, split=valid)."""
+        """Crea l'ambiente di validazione (singolo, split=valid)."""
         return _crea_env(
             self.directory_livelli, self.difficolta, "valid", self.max_step
         )
@@ -113,21 +120,26 @@ class AgentePPO:
         frequenza_eval: int = 10_000,
         frequenza_checkpoint: int = 100_000,
     ) -> None:
-        """Addestra l'agente PPO.
+        """Addestra l'agente PPO per il numero di timestep specificato.
+
+        Salva il miglior modello (per reward media su valutazione) nella
+        sottocartella best/ e checkpoint regolari nella cartella checkpoints/.
+        La valutazione avviene ogni ~20K interazioni ambientali totali
+        (frequenza_eval viene divisa per n_envs per normalizzare).
 
         Parametri:
-            totale_timesteps:    numero totale di timestep per il training.
-            dir_log:             directory per i log TensorBoard.
-            dir_modello:         directory per i checkpoint dei modelli.
-            frequenza_eval:      ogni quanti step eseguire la valutazione.
-            frequenza_checkpoint: ogni quanti step salvare il checkpoint.
+            totale_timesteps:     numero totale di timestep di training.
+            dir_log:              directory per i log TensorBoard.
+            dir_modello:          directory per i checkpoint.
+            frequenza_eval:       interazioni totali tra una valutazione e l'altra.
+            frequenza_checkpoint: interazioni totali tra un checkpoint e l'altro.
         """
         self._env_train = self._costruisci_env_train()
         env_val = self._costruisci_env_val()
 
-        # Configurazione PPO
+        # Rimuove tensorboard_log dalla config perche' viene passato separatamente
         config = {k: v for k, v in self.config_ppo.items()
-                  if k != "tensorboard_log"}  # lo gestiamo separatamente
+                  if k != "tensorboard_log"}
 
         self.modello = PPO(
             env=self._env_train,
@@ -139,17 +151,16 @@ class AgentePPO:
         print(
             f"\n[AgentePPO] Avvio training — "
             f"seed={self.seme}, timesteps={totale_timesteps:,}, "
-            f"n_envs={self.n_envs}, difficoltà={self.difficolta}"
+            f"n_envs={self.n_envs}, difficolta'={self.difficolta}"
         )
         print(f"[AgentePPO] Policy: {self.modello.policy}")
 
-        # Callbacks
         callbacks: List[BaseCallback] = []
 
         if dir_modello is not None:
             Path(dir_modello).mkdir(parents=True, exist_ok=True)
 
-            # Valutazione periodica con salvataggio del miglior modello
+            # Valutazione periodica: salva il miglior modello nella cartella best/
             eval_callback = EvalCallback(
                 env_val,
                 best_model_save_path=str(Path(dir_modello) / "best"),
@@ -162,7 +173,7 @@ class AgentePPO:
             )
             callbacks.append(eval_callback)
 
-            # Checkpoint regolare
+            # Checkpoint periodico: utile per analizzare la curva di apprendimento
             checkpoint_callback = CheckpointCallback(
                 save_freq=max(frequenza_checkpoint // self.n_envs, 1),
                 save_path=str(Path(dir_modello) / "checkpoints"),
@@ -191,47 +202,50 @@ class AgentePPO:
         split: str = "test",
         deterministico: bool = True,
     ) -> Dict[str, float]:
-        """Valuta l'agente su un set di livelli e restituisce le metriche.
+        """Valuta il modello su n_episodi e restituisce le metriche aggregate.
+
+        Usa la policy deterministica (argmax) per la valutazione finale.
+        Il solve rate e' calcolato su terminated=True, non sulla reward.
 
         Parametri:
-            n_episodi:     numero di episodi da valutare.
-            difficolta:    difficoltà da usare (default: quella del training).
-            split:         'train', 'valid', 'test'.
+            n_episodi:      numero di episodi da eseguire.
+            difficolta:     difficolta' del dataset (default: quella del training).
+            split:          'train' | 'valid' | 'test'.
             deterministico: True per usare la policy deterministica.
 
         Restituisce dizionario con:
-            solve_rate:         percentuale episodi risolti.
-            mosse_medie:        media mosse per episodi risolti.
-            reward_cumulativa:  media reward totale per tutti gli episodi.
-            casse_su_target:    media casse su target a fine episodio.
+            solve_rate:        % episodi risolti (terminated=True).
+            mosse_medie:       media mosse per episodi risolti (0.0 se nessuno).
+            reward_cumulativa: media reward totale su tutti gli episodi.
+            casse_su_target:   media casse su target a fine episodio.
         """
         if self.modello is None:
-            raise RuntimeError("Il modello non è stato addestrato. Chiamare addestra().")
+            raise RuntimeError("Il modello non e' stato addestrato. Chiamare addestra().")
 
         diff = difficolta or self.difficolta
-        env = _crea_env(self.directory_livelli, diff, split, self.max_step)
+        env  = _crea_env(self.directory_livelli, diff, split, self.max_step)
 
         n_risolti = 0
-        mosse_risolti: List[int] = []
+        mosse_risolti: List[int]   = []
         reward_totali: List[float] = []
-        casse_totali: List[int] = []
+        casse_totali:  List[int]   = []
 
         for _ in range(n_episodi):
             obs, _ = env.reset()
-            reward_ep = 0.0
-            step_ep = 0
-            done = False
+            reward_ep  = 0.0
+            step_ep    = 0
+            done       = False
             casse_finali = 0
 
             while not done:
                 azione, _ = self.modello.predict(obs, deterministic=deterministico)
                 obs, reward, terminated, truncated, info = env.step(int(azione))
-                reward_ep += float(reward)
-                step_ep += 1
+                reward_ep   += float(reward)
+                step_ep     += 1
                 casse_finali = info.get("casse_su_target", 0)
                 done = terminated or truncated
 
-            if terminated:  # vittoria
+            if terminated:   # vittoria effettiva: tutte le casse su target
                 n_risolti += 1
                 mosse_risolti.append(step_ep)
 
@@ -240,10 +254,10 @@ class AgentePPO:
 
         env.close()
 
-        solve_rate = n_risolti / n_episodi * 100
-        mosse_medie = float(np.mean(mosse_risolti)) if mosse_risolti else 0.0
+        solve_rate   = n_risolti / n_episodi * 100
+        mosse_medie  = float(np.mean(mosse_risolti)) if mosse_risolti else 0.0
         reward_media = float(np.mean(reward_totali))
-        casse_medie = float(np.mean(casse_totali))
+        casse_medie  = float(np.mean(casse_totali))
 
         metriche = {
             "solve_rate":        round(solve_rate, 2),
@@ -269,7 +283,10 @@ class AgentePPO:
     # ------------------------------------------------------------------
 
     def salva(self, percorso: str) -> None:
-        """Salva il modello nel percorso specificato (aggiunge .zip automaticamente)."""
+        """Salva il modello nel percorso specificato (SB3 aggiunge .zip).
+
+        Crea automaticamente le directory intermedie se non esistono.
+        """
         if self.modello is None:
             raise RuntimeError("Nessun modello da salvare. Chiamare addestra().")
         Path(percorso).parent.mkdir(parents=True, exist_ok=True)
@@ -277,7 +294,7 @@ class AgentePPO:
         print(f"[AgentePPO] Modello salvato: {percorso}.zip")
 
     def carica(self, percorso: str) -> None:
-        """Carica un modello precedentemente salvato."""
+        """Carica un modello precedentemente salvato dal percorso specificato."""
         env = self._costruisci_env_train()
         self.modello = PPO.load(percorso, env=env)
         print(f"[AgentePPO] Modello caricato: {percorso}")

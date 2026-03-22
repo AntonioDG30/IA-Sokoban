@@ -1,15 +1,14 @@
-"""Agente DQN (Deep Q-Network) per Sokoban.
+"""Agente AG-DQN: Deep Q-Network su Sokoban.
 
-Wrapper attorno a Stable Baselines 3 che gestisce:
-- Creazione e configurazione del modello DQN con MlpPolicy
-- Training con logging su TensorBoard
-- Callback per valutazione periodica e salvataggio checkpoint
-- Valutazione con metriche (solve rate, mosse medie, reward cumulativa)
-- Salvataggio e caricamento checkpoint
+Wrapper attorno a DQN di Stable Baselines 3. A differenza di AG-PPO,
+DQN non supporta ambienti vettorizzati: usa un singolo ambiente sia
+per il training sia per la valutazione. Il replay buffer non viene
+azzerato tra le fasi del curriculum (buffer carry-over), permettendo
+al modello di mantenere le competenze acquisite nelle fasi precedenti.
 
-Riferimenti:
-    - SB3 DQN: https://stable-baselines3.readthedocs.io/en/master/modules/dqn.html
-    - Paper DQN: Mnih et al. (2015), Nature 518, 529-533
+Riferimento:
+    Mnih et al. (2015), Human-level control through deep reinforcement learning.
+    Nature 518, 529-533.
 """
 
 from pathlib import Path
@@ -34,10 +33,14 @@ def _crea_env(
     max_step: int,
     render_mode: Optional[str] = None,
 ) -> Monitor:
-    """Factory che crea un SokobanEnv avvolto in Monitor.
+    """Crea un SokobanEnv avvolto in Monitor per la raccolta delle metriche.
 
-    Monitor registra le metriche episodiche (reward, lunghezza) in formato
-    compatibile con SB3 e TensorBoard.
+    Parametri:
+        directory_livelli: percorso a data/boxoban/ (None per livelli builtin).
+        difficolta:        'unfiltered' | 'medium' | 'hard'.
+        split:             'train' | 'valid' | 'test'.
+        max_step:          limite di step per episodio.
+        render_mode:       None | 'human' | 'rgb_array'.
     """
     env = SokobanEnv(
         directory_livelli=directory_livelli,
@@ -50,18 +53,19 @@ def _crea_env(
 
 
 class AgenteDQN:
-    """Wrapper SB3-DQN per l'addestramento e la valutazione su Sokoban.
+    """Wrapper SB3-DQN per il training e la valutazione su Sokoban.
+
+    DQN usa un replay buffer off-policy: le esperienze raccolte vengono
+    accumulate e riusate piu' volte per l'aggiornamento. Il buffer non
+    viene azzerato tra le fasi del curriculum, permettendo al modello
+    di continuare ad apprendere dalle competenze delle fasi precedenti.
 
     Parametri:
-        config_dqn:        dizionario con i parametri DQN (da experiments/config.py).
-        directory_livelli: percorso alla directory dei dati Boxoban.
-        difficolta:        'unfiltered', 'medium', 'hard'.
+        config_dqn:        dizionario con gli iperparametri DQN (da experiments/config.py).
+        directory_livelli: percorso a data/boxoban/.
+        difficolta:        difficolta' del dataset Boxoban da usare.
         max_step:          step massimi per episodio.
-        seme:              seme per la riproducibilità.
-
-    Note:
-        DQN non supporta ambienti vettorizzati (a differenza di PPO),
-        quindi usa un singolo ambiente sia per il training sia per la valutazione.
+        seme:              seed per la riproducibilita'.
     """
 
     def __init__(
@@ -72,11 +76,11 @@ class AgenteDQN:
         max_step: int = 120,
         seme: int = 42,
     ):
-        self.config_dqn = config_dqn
+        self.config_dqn        = config_dqn
         self.directory_livelli = directory_livelli
-        self.difficolta = difficolta
-        self.max_step = max_step
-        self.seme = seme
+        self.difficolta        = difficolta
+        self.max_step          = max_step
+        self.seme              = seme
         self.modello: Optional[DQN] = None
 
     # ------------------------------------------------------------------
@@ -84,13 +88,13 @@ class AgenteDQN:
     # ------------------------------------------------------------------
 
     def _costruisci_env_train(self) -> Monitor:
-        """Costruisce l'ambiente di training (singolo, avvolto in Monitor)."""
+        """Crea l'ambiente di training (singolo, avvolto in Monitor)."""
         return _crea_env(
             self.directory_livelli, self.difficolta, "train", self.max_step
         )
 
     def _costruisci_env_val(self) -> Monitor:
-        """Costruisce l'ambiente di validazione (singolo, split=valid)."""
+        """Crea l'ambiente di validazione (singolo, split=valid)."""
         return _crea_env(
             self.directory_livelli, self.difficolta, "valid", self.max_step
         )
@@ -107,19 +111,19 @@ class AgenteDQN:
         frequenza_eval: int = 10_000,
         frequenza_checkpoint: int = 100_000,
     ) -> None:
-        """Addestra l'agente DQN.
+        """Addestra l'agente DQN per il numero di timestep specificato.
 
         Parametri:
-            totale_timesteps:     numero totale di timestep per il training.
+            totale_timesteps:     numero totale di timestep di training.
             dir_log:              directory per i log TensorBoard.
-            dir_modello:          directory per i checkpoint dei modelli.
-            frequenza_eval:       ogni quanti step eseguire la valutazione.
-            frequenza_checkpoint: ogni quanti step salvare il checkpoint.
+            dir_modello:          directory per i checkpoint.
+            frequenza_eval:       step tra una valutazione e la successiva.
+            frequenza_checkpoint: step tra un checkpoint e l'altro.
         """
         env_train = self._costruisci_env_train()
-        env_val = self._costruisci_env_val()
+        env_val   = self._costruisci_env_val()
 
-        # Configurazione DQN (tensorboard_log gestito separatamente)
+        # tensorboard_log e' gestito separatamente: non va in **config
         config = {k: v for k, v in self.config_dqn.items()
                   if k != "tensorboard_log"}
 
@@ -133,17 +137,16 @@ class AgenteDQN:
         print(
             f"\n[AgenteDQN] Avvio training — "
             f"seed={self.seme}, timesteps={totale_timesteps:,}, "
-            f"difficoltà={self.difficolta}"
+            f"difficolta'={self.difficolta}"
         )
         print(f"[AgenteDQN] Policy: {self.modello.policy}")
 
-        # Callbacks
         callbacks: List[BaseCallback] = []
 
         if dir_modello is not None:
             Path(dir_modello).mkdir(parents=True, exist_ok=True)
 
-            # Valutazione periodica con salvataggio del miglior modello
+            # Valutazione periodica: salva il checkpoint con la reward media piu' alta
             eval_callback = EvalCallback(
                 env_val,
                 best_model_save_path=str(Path(dir_modello) / "best"),
@@ -156,7 +159,7 @@ class AgenteDQN:
             )
             callbacks.append(eval_callback)
 
-            # Checkpoint regolare
+            # Checkpoint periodico per analisi post-training
             checkpoint_callback = CheckpointCallback(
                 save_freq=frequenza_checkpoint,
                 save_path=str(Path(dir_modello) / "checkpoints"),
@@ -185,47 +188,47 @@ class AgenteDQN:
         split: str = "test",
         deterministico: bool = True,
     ) -> Dict[str, float]:
-        """Valuta l'agente su un set di livelli e restituisce le metriche.
+        """Valuta il modello su n_episodi e restituisce le metriche aggregate.
 
         Parametri:
-            n_episodi:     numero di episodi da valutare.
-            difficolta:    difficoltà da usare (default: quella del training).
-            split:         'train', 'valid', 'test'.
-            deterministico: True per usare la policy deterministica.
+            n_episodi:      numero di episodi da eseguire.
+            difficolta:     difficolta' del dataset (default: quella del training).
+            split:          'train' | 'valid' | 'test'.
+            deterministico: True per usare la policy deterministica (argmax Q).
 
         Restituisce dizionario con:
-            solve_rate:         percentuale episodi risolti.
-            mosse_medie:        media mosse per episodi risolti.
-            reward_cumulativa:  media reward totale per tutti gli episodi.
-            casse_su_target:    media casse su target a fine episodio.
+            solve_rate:        % episodi risolti.
+            mosse_medie:       media mosse per episodi risolti.
+            reward_cumulativa: media reward totale su tutti gli episodi.
+            casse_su_target:   media casse su target a fine episodio.
         """
         if self.modello is None:
-            raise RuntimeError("Il modello non è stato addestrato. Chiamare addestra().")
+            raise RuntimeError("Il modello non e' stato addestrato. Chiamare addestra().")
 
         diff = difficolta or self.difficolta
-        env = _crea_env(self.directory_livelli, diff, split, self.max_step)
+        env  = _crea_env(self.directory_livelli, diff, split, self.max_step)
 
         n_risolti = 0
-        mosse_risolti: List[int] = []
+        mosse_risolti: List[int]   = []
         reward_totali: List[float] = []
-        casse_totali: List[int] = []
+        casse_totali:  List[int]   = []
 
         for _ in range(n_episodi):
             obs, _ = env.reset()
-            reward_ep = 0.0
-            step_ep = 0
-            done = False
+            reward_ep  = 0.0
+            step_ep    = 0
+            done       = False
             casse_finali = 0
 
             while not done:
                 azione, _ = self.modello.predict(obs, deterministic=deterministico)
                 obs, reward, terminated, truncated, info = env.step(int(azione))
-                reward_ep += float(reward)
-                step_ep += 1
+                reward_ep   += float(reward)
+                step_ep     += 1
                 casse_finali = info.get("casse_su_target", 0)
                 done = terminated or truncated
 
-            if terminated:  # vittoria
+            if terminated:   # vittoria effettiva
                 n_risolti += 1
                 mosse_risolti.append(step_ep)
 
@@ -234,10 +237,10 @@ class AgenteDQN:
 
         env.close()
 
-        solve_rate = n_risolti / n_episodi * 100
-        mosse_medie = float(np.mean(mosse_risolti)) if mosse_risolti else 0.0
+        solve_rate   = n_risolti / n_episodi * 100
+        mosse_medie  = float(np.mean(mosse_risolti)) if mosse_risolti else 0.0
         reward_media = float(np.mean(reward_totali))
-        casse_medie = float(np.mean(casse_totali))
+        casse_medie  = float(np.mean(casse_totali))
 
         metriche = {
             "solve_rate":        round(solve_rate, 2),
@@ -263,7 +266,7 @@ class AgenteDQN:
     # ------------------------------------------------------------------
 
     def salva(self, percorso: str) -> None:
-        """Salva il modello nel percorso specificato (aggiunge .zip automaticamente)."""
+        """Salva il modello nel percorso specificato (SB3 aggiunge .zip)."""
         if self.modello is None:
             raise RuntimeError("Nessun modello da salvare. Chiamare addestra().")
         Path(percorso).parent.mkdir(parents=True, exist_ok=True)
@@ -271,7 +274,7 @@ class AgenteDQN:
         print(f"[AgenteDQN] Modello salvato: {percorso}.zip")
 
     def carica(self, percorso: str) -> None:
-        """Carica un modello precedentemente salvato."""
+        """Carica un modello precedentemente salvato dal percorso specificato."""
         env = self._costruisci_env_train()
         self.modello = DQN.load(percorso, env=env)
         print(f"[AgenteDQN] Modello caricato: {percorso}")

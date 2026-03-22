@@ -39,6 +39,11 @@ from agents.llm_act_agent import AgenteAgLLM
 # ---------------------------------------------------------------------------
 
 def _parse_args():
+    """Legge gli argomenti da riga di comando.
+
+    Restituisce:
+        Namespace con seed (int), provider (str) e dir_dati (str percorso a data/boxoban).
+    """
     p = argparse.ArgumentParser(description="Valutazione AG-LLM su curriculum v9")
     p.add_argument("--seed",     type=int, default=42,              help="Seed fisso")
     p.add_argument("--provider", type=str, default=PROVIDER_DEFAULT, help="Provider LLM")
@@ -51,6 +56,11 @@ def _parse_args():
 # ---------------------------------------------------------------------------
 
 def _percorso_checkpoint(percorso_out: Path) -> Path:
+    """Deriva il percorso del checkpoint dal percorso risultati.
+
+    Sostituisce 'risultati_' con 'checkpoint_' nel nome file, stessa cartella.
+    Cosi' basta un'unica variabile (percorso_out) per trovare entrambi i file.
+    """
     return percorso_out.parent / percorso_out.name.replace("risultati_", "checkpoint_")
 
 
@@ -66,6 +76,11 @@ def _carica_checkpoint(percorso_ckpt: Path) -> dict:
 
 
 def _salva_checkpoint(percorso_ckpt: Path, fasi_completate: dict) -> None:
+    """Sovrascrive il file checkpoint JSON con le fasi gia' completate.
+
+    Chiamata dopo ogni fase per permettere il resume se il processo viene interrotto.
+    ensure_ascii=False preserva eventuali caratteri non-ASCII nelle chiavi.
+    """
     with open(percorso_ckpt, "w", encoding="utf-8") as f:
         json.dump(fasi_completate, f, indent=2, ensure_ascii=False)
 

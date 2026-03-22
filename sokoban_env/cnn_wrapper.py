@@ -1,11 +1,14 @@
-"""Wrapper gymnasium che aggiunge la dimensione canale all'osservazione.
+"""Wrapper Gymnasium che aggiunge la dimensione canale all'osservazione.
 
-Trasforma (10, 10) float32 → (1, 10, 10) float32 (channels-first)
-per compatibilita' con CnnPolicy di Stable Baselines 3.
+SokobanEnv restituisce osservazioni di forma (H, W) float32. Le policy CNN
+di Stable Baselines 3 si aspettano tensori channels-first (C, H, W). Questo
+wrapper inserisce il canale in posizione 0, trasformando (H, W) in (1, H, W).
 
-Con la CNN l'agente impara filtri convoluzionali invarianti alla traslazione
-(es. "cassa vicina a target → spingi"), che si generalizzano tra griglie
-di dimensione diversa (5x5 → 7x7 → 10x10 nel curriculum).
+Utilizzo tipico nella catena di wrapping per il training:
+    env = SokobanEnv(...)
+    env = AggiuntaCanale(env)     # (10,10) -> (1,10,10)
+    env = Monitor(env)            # raccoglie statistiche episodiche
+    env = VecEnv(env)             # parallelizzazione (solo PPO)
 """
 
 import numpy as np
@@ -14,23 +17,28 @@ from gymnasium import spaces
 
 
 class AggiuntaCanale(gym.ObservationWrapper):
-    """Aggiunge dimensione canale: (H, W) float32 → (1, H, W) float32.
+    """Trasforma l'osservazione da (H, W) a (1, H, W) float32.
 
-    Uso:
-        env = SokobanEnv(griglia_size=(5, 5), n_casse=1)
-        env = AggiuntaCanale(env)
-        # env.observation_space.shape == (1, 10, 10)
+    Parametri:
+        env: ambiente Gymnasium con observation_space 2D (H, W).
+
+    Solleva ValueError se l'observation space non e' 2D.
     """
 
     def __init__(self, env: gym.Env) -> None:
         super().__init__(env)
         old = env.observation_space
+
+        # Verifica che l'obs space sia 2D: il wrapper ha senso solo in questo caso
         if len(old.shape) != 2:
             raise ValueError(
                 f"AggiuntaCanale si aspetta obs 2D (H, W), "
                 f"ricevuto shape {old.shape}"
             )
+
         h, w = old.shape
+
+        # Aggiorna l'observation space per riflettere la nuova forma (1, H, W)
         self.observation_space = spaces.Box(
             low=np.zeros((1, h, w), dtype=np.float32),
             high=np.full((1, h, w), float(old.high.max()), dtype=np.float32),
@@ -38,5 +46,12 @@ class AggiuntaCanale(gym.ObservationWrapper):
         )
 
     def observation(self, obs: np.ndarray) -> np.ndarray:
-        """(H, W) → (1, H, W)."""
+        """Aggiunge la dimensione canale in posizione 0: (H, W) -> (1, H, W).
+
+        Parametri:
+            obs: array float32 di forma (H, W).
+
+        Restituisce:
+            Array float32 di forma (1, H, W).
+        """
         return obs[np.newaxis, ...].astype(np.float32)

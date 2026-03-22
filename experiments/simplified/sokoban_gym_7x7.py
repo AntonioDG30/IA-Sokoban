@@ -53,6 +53,13 @@ class SokobanEnv7x7(gymnasium.Env):
         max_step: int = 100,
         seme: Optional[int] = None,
     ) -> None:
+        """Inizializza l'ambiente 7x7 con generatore procedurale.
+
+        Parametri:
+            n_casse:  numero di casse da piazzare nel livello generato
+            max_step: passi massimi per episodio prima del truncated
+            seme:     seed per il generatore di livelli (None = casuale)
+        """
         super().__init__()
 
         self.n_casse = n_casse
@@ -79,6 +86,11 @@ class SokobanEnv7x7(gymnasium.Env):
         seed: Optional[int] = None,
         options: Optional[Dict[str, Any]] = None,
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
+        """Genera un nuovo livello 7x7 e resetta il contatore step.
+
+        Restituisce:
+            (obs float32 (7,7), info dict con metriche iniziali)
+        """
         super().reset(seed=seed)
         # Genera griglia 7x7 nativa -- nessun padding
         self._griglia = self._generatore.genera(7, 7, self.n_casse)
@@ -89,6 +101,13 @@ class SokobanEnv7x7(gymnasium.Env):
     def step(
         self, action: int
     ) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
+        """Applica un'azione e restituisce la transizione (obs, reward, terminated, truncated, info).
+
+        Parametri:
+            action: intero in {0,1,2,3} -- su/giu/sinistra/destra
+        Restituisce:
+            tupla standard Gymnasium (obs, reward, terminated, truncated, info)
+        """
         if self._griglia is None:
             raise RuntimeError("Chiamare reset() prima di step().")
 
@@ -110,9 +129,11 @@ class SokobanEnv7x7(gymnasium.Env):
         return self._griglia.astype(np.float32), reward, terminated, truncated, info
 
     def render(self):
+        """Rendering non implementato per questo ambiente headless."""
         return None
 
     def close(self) -> None:
+        """Chiude l'ambiente; nessuna risorsa da rilasciare."""
         pass
 
     # ------------------------------------------------------------------
@@ -120,6 +141,14 @@ class SokobanEnv7x7(gymnasium.Env):
     # ------------------------------------------------------------------
 
     def _info(self, mossa_eseguita: bool, cassa_spostata: bool) -> Dict[str, Any]:
+        """Costruisce il dizionario info da restituire con reset() e step().
+
+        Parametri:
+            mossa_eseguita: True se il giocatore si e' effettivamente mosso
+            cassa_spostata: True se almeno una cassa e' stata spostata in questo step
+        Restituisce:
+            dizionario con step_corrente, casse_su_target, mossa_eseguita, cassa_spostata
+        """
         if self._griglia is None:
             return {}
         return {

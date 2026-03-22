@@ -1,28 +1,21 @@
-"""AG-LLM-REW: PPO addestrato con reward aumentata da LLM.
+"""Agente AG-LLM-REW: PPO addestrato con reward arricchita da valutazione LLM.
 
-Il LLM valuta l'azione appena eseguita confrontando la griglia prima e dopo
-la mossa. Viene chiamato solo quando una cassa e' stata effettivamente spostata
-(solo_push, ~5% degli step). A inference time solo il PPO agisce: il LLM
+Il LLM valuta la qualita' di ogni spinta di cassa confrontando la griglia
+prima e dopo la mossa. Il giudizio viene scalato e aggiunto alla reward
+standard dell'ambiente. A inference time solo il PPO agisce: il LLM
 non e' piu' necessario.
 
-Architettura:
-    SokobanEnv -> RicompensaLLM -> Monitor -> PPO
+Il wrapper RicompensaLLM intercetta ogni chiamata a step() e:
+    1. Salva la griglia pre-mossa (obs corrente prima della chiamata).
+    2. Esegue env.step(action) per ottenere la griglia post-mossa.
+    3. Se una cassa e' stata spostata (info['cassa_spostata']=True):
+       - Controlla la cache (obs_pre, action) -> score gia' calcolato.
+       - Cache miss: chiede al LLM un punteggio 0-3 sul confronto pre/post.
+       - Aggiunge lambda_llm * score alla reward originale.
+    4. Per tutti gli altri step (~95%): reward invariata, nessuna chiamata LLM.
 
-Il wrapper RicompensaLLM intercetta step():
-  - Salva la griglia pre-mossa (obs corrente prima di chiamare env.step)
-  - Chiama env.step(action) per ottenere la griglia post-mossa
-  - Se info['cassa_spostata'] e' True (una cassa e' stata spinta):
-    - Controlla cache (obs_pre.tobytes(), action) -> score
-    - Cache miss: chiede al LLM una valutazione 0-3 confrontando pre e post
-    - Normalizza score [-0.5, +0.5], scala per LAMBDA_LLM, aggiunge a reward
-  - Altrimenti: reward invariata (~95% degli step, risparmio LLM)
-
-Scelta trigger solo_push (vs solo_adiacente):
-  - Segnale piu' preciso: il LLM giudica solo push strategici, non prossimita'
-  - ~4x meno chiamate LLM (~115K vs ~466K) -> ~21h vs ~40h
-  - Reward base (Manhattan shaping + proximity bonus) copre gia' la navigazione
-  - Cache key: (obs_pre, action) per correttezza semantica
-  - Prompt: mostra griglia pre+post + nome azione
+Usare solo push effettivi come trigger riduce le chiamate LLM di circa 20x
+rispetto a chiamare il LLM ad ogni step, rendendo il training fattibile.
 """
 
 import sys
@@ -46,16 +39,20 @@ from experiments.config import MAX_TOKENS_REWARD, TIMEOUT_LLM_SEC, LAMBDA_LLM
 
 
 class RicompensaLLM(gymnasium.Wrapper):
-    """Gymnasium Wrapper che aumenta la reward con valutazione LLM.
+    """Wrapper Gymnasium che aggiunge la valutazione LLM alla reward.
 
-    Chiama il LLM solo quando una cassa e' stata effettivamente spostata
-    (solo_push, ~5% degli step). Mantiene una cache keyed su (obs_pre, action)
-    per evitare chiamate duplicate sulle stesse transizioni.
+    Intercetta step() e, quando una cassa viene spostata, chiede al LLM
+    di valutare la mossa su scala 0-3. Il punteggio normalizzato in
+    [-0.5, +0.5] viene scalato per lambda_llm e aggiunto alla reward base.
+
+    Una cache keyed su (obs_pre.tobytes(), action) evita di chiamare il LLM
+    piu' volte per la stessa coppia (stato, azione), cosa comune nelle fasi
+    iniziali del training quando l'agente tende a ripetere le stesse mosse.
 
     Parametri:
-        env:        SokobanEnv (obs 2D float32, info['cassa_spostata']).
-        client:     ClienteLLM istanziato.
-        lambda_llm: fattore moltiplicativo del segnale LLM (default LAMBDA_LLM).
+        env:        SokobanEnv (obs 2D float32, info['cassa_spostata'] presente).
+        client:     ClienteLLM istanziato e pronto.
+        lambda_llm: peso del segnale LLM nella reward complessiva.
     """
 
     def __init__(
@@ -65,17 +62,23 @@ class RicompensaLLM(gymnasium.Wrapper):
         lambda_llm: float = LAMBDA_LLM,
     ) -> None:
         super().__init__(env)
-        self._client = client
-        self._lambda = lambda_llm
-        # Cache: (obs_pre bytes, action int) -> score float
+        self._client  = client
+        self._lambda  = lambda_llm
+
+        # Cache: (hash obs_pre, azione) -> score float in [-0.5, +0.5]
         self._cache: Dict[Tuple[bytes, int], float] = {}
         self._n_chiamate_llm: int = 0
-        self._n_cache_hit: int = 0
-        # Obs corrente (pre-step), aggiornato in reset() e step()
+        self._n_cache_hit: int    = 0
+
+        # Obs corrente (aggiornata a ogni reset() e step()), usata come pre-step
         self._obs_corrente: Optional[np.ndarray] = None
 
     def reset(self, **kwargs) -> Tuple[np.ndarray, Dict]:
-        """Reset: salva obs iniziale per uso come pre-step al primo step()."""
+        """Resetta l'ambiente e memorizza l'osservazione iniziale come pre-step.
+
+        L'obs iniziale serve per avere la griglia pre-mossa disponibile
+        senza dover chiamare l'ambiente una seconda volta.
+        """
         obs, info = self.env.reset(**kwargs)
         self._obs_corrente = obs.copy()
         return obs, info
@@ -83,27 +86,37 @@ class RicompensaLLM(gymnasium.Wrapper):
     def step(
         self, action: int
     ) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
-        """Esegue lo step e aggiunge segnale LLM se una cassa e' stata spostata."""
-        # Salva griglia pre-mossa
+        """Esegue lo step e aggiunge la valutazione LLM se una cassa e' stata spostata.
+
+        Parametri:
+            action: intero in {0, 1, 2, 3}.
+
+        Restituisce:
+            (obs_post, reward_aumentata, terminated, truncated, info)
+        """
+        # Griglia pre-mossa: e' l'obs del passo precedente
         obs_pre = self._obs_corrente
 
-        # Esegui la mossa
         obs_post, reward, terminated, truncated, info = self.env.step(action)
 
-        # Aggiorna stato corrente per il prossimo step
+        # Aggiorna l'obs corrente per il prossimo step
         self._obs_corrente = obs_post.copy()
 
-        # Chiama LLM solo su push effettivi (~5% degli step)
+        # Chiamata LLM solo se una cassa e' stata effettivamente spostata (~5% degli step)
         if info.get("cassa_spostata", False):
             cache_key = (obs_pre.tobytes(), int(action))
+
             if cache_key in self._cache:
+                # Stesso stato e stessa azione gia' valutati: riusa il punteggio
                 score = self._cache[cache_key]
                 self._n_cache_hit += 1
             else:
+                # Nuova valutazione: costruisce il prompt con griglia pre/post
                 casse_tgt, n_casse = conta_casse(obs_post)
-                grid_pre  = griglia_a_testo(obs_pre)
-                grid_post = griglia_a_testo(obs_post)
+                grid_pre   = griglia_a_testo(obs_pre)
+                grid_post  = griglia_a_testo(obs_post)
                 azione_nome = NOMI_AZIONI[int(action)]
+
                 prompt = crea_prompt_reward(
                     grid_text_pre=grid_pre,
                     grid_text_post=grid_post,
@@ -118,31 +131,31 @@ class RicompensaLLM(gymnasium.Wrapper):
                 )
                 score = parsifica_reward(risposta)
                 self._cache[cache_key] = score
-                self._n_chiamate_llm += 1
+                self._n_chiamate_llm  += 1
 
+            # Aggiunge il contributo LLM alla reward base
             reward += self._lambda * score
 
         return obs_post, reward, terminated, truncated, info
 
     @property
     def statistiche_llm(self) -> Dict[str, int]:
-        """Statistiche utilizzo LLM: chiamate, cache hit, dimensione cache."""
+        """Restituisce le statistiche di utilizzo del LLM durante il training."""
         return {
-            "n_chiamate": self._n_chiamate_llm,
+            "n_chiamate":  self._n_chiamate_llm,
             "n_cache_hit": self._n_cache_hit,
             "cache_size":  len(self._cache),
         }
 
 
 class AgenteRicompensaLLM:
-    """Factory per RicompensaLLM.
+    """Factory che crea e configura il wrapper RicompensaLLM.
 
-    Crea e configura il wrapper LLM reward (trigger: solo_push).
-    Espone avvolgi_env() usato in experiments/train_ppo_llm_rew.py.
+    Istanzia il ClienteLLM e lo inietta nel wrapper. Espone avvolgi_env()
+    usato dagli script di training in experiments/train_ppo_llm_rew.py.
 
     Parametri:
-        provider:   provider LLM ("ollama", "groq", "mistral").
-        lambda_llm: fattore di scala del segnale LLM.
+        lambda_llm: peso del segnale LLM nella reward (default: LAMBDA_LLM da config).
     """
 
     def __init__(
@@ -150,12 +163,18 @@ class AgenteRicompensaLLM:
         provider: str = "ollama",
         lambda_llm: float = LAMBDA_LLM,
     ) -> None:
-        self.provider = provider
         self.lambda_llm = lambda_llm
         self._client = ClienteLLM(provider)
 
     def avvolgi_env(self, env: gymnasium.Env) -> RicompensaLLM:
-        """Avvolge SokobanEnv con il wrapper LLM reward."""
+        """Avvolge l'ambiente SokobanEnv con il wrapper LLM reward.
+
+        Parametri:
+            env: SokobanEnv non ancora avvolto (senza Monitor).
+
+        Restituisce:
+            RicompensaLLM pronto per essere avvolto in Monitor e poi in PPO.
+        """
         return RicompensaLLM(
             env=env,
             client=self._client,

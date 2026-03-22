@@ -102,6 +102,11 @@ def _leggi_max_solve_rate(dir_eval_logs: Path) -> float:
 # ---------------------------------------------------------------------------
 
 def _parse_args():
+    """Legge gli argomenti da riga di comando.
+
+    Restituisce:
+        Namespace con seed (int), dir_dati (str) e provider (str) per il client LLM.
+    """
     p = argparse.ArgumentParser(description="Training AG-LLM-GUIDE curriculum v9 LfD")
     p.add_argument("--seed",     type=int, default=42,
                    help="Seed fisso per riproducibilita'")

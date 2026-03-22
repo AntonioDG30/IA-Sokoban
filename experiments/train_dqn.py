@@ -86,6 +86,11 @@ def _leggi_max_solve_rate(dir_eval_logs: Path) -> float:
 # ---------------------------------------------------------------------------
 
 def _parse_args():
+    """Legge gli argomenti da riga di comando.
+
+    Restituisce:
+        Namespace con seed (int) e dir_dati (str percorso a data/boxoban).
+    """
     p = argparse.ArgumentParser(description="Training AG-DQN curriculum v9")
     p.add_argument("--seed",     type=int, default=42,            help="Seed fisso")
     p.add_argument("--dir-dati", type=str, default=str(DIR_DATI), help="Path data/boxoban")
@@ -97,7 +102,17 @@ def _parse_args():
 # ---------------------------------------------------------------------------
 
 def addestra_curriculum(seed: int, dir_dati: str) -> None:
-    """Addestra AG-DQN con curriculum completo C0->C5."""
+    """Addestra AG-DQN con curriculum adattivo completo C0->C5.
+
+    Identico alla struttura di train_ppo.py ma con DQN (singolo ambiente,
+    buffer replay persistente tra fasi). Per ogni fase aggiorna l'ambiente
+    con set_env() senza azzerare il buffer: le esperienze delle fasi precedenti
+    restano disponibili per il training.
+
+    Parametri:
+        seed:     seed per la riproducibilita' del training.
+        dir_dati: percorso alla directory data/boxoban/ contenente i dataset Boxoban.
+    """
     dir_dati_path = Path(dir_dati)
     dir_modello   = percorso_modello_dqn(seed).parent
     dir_log_dqn   = DIR_LOG / "dqn" / f"seed{seed}"

@@ -1,20 +1,19 @@
-"""Agente AG-LLM: policy diretta tramite LLM (inference-time, no RL).
+"""Agente AG-LLM: policy diretta tramite LLM senza training RL.
 
-Il LLM genera l'azione da eseguire ad ogni turno osservando la griglia
-ASCII e lo stato corrente (casse su target, step rimasti).
-Non c'e' training: il LLM e' gia' la policy al momento della valutazione.
+Il LLM genera l'azione da eseguire ad ogni turno osservando la griglia ASCII,
+le coordinate esplicite di giocatore/casse/target e le ultime 5 mosse eseguite.
+Non c'e' nessun modello RL da addestrare: il LLM e' la policy a tutti gli effetti.
 
-Ruolo nel progetto:
-    Traccia richiede "LLM genera l'azione da eseguire ogni turno".
-    A differenza di AG-PPO e AG-LLM-REW, qui non c'e' modello RL salvato:
-    il LLM e' l'agente a tutti gli effetti durante la valutazione.
+Questo agente serve come baseline di riferimento: mostra quanto riesce a fare
+un LLM di buona qualita' (qwen3:14b) su Sokoban senza alcun training,
+confrontandosi con gli agenti RL addestrati.
 
 Metriche raccolte per episodio:
-    - solved (bool): True se tutte le casse sono state piazzate
-    - mosse (int): numero di step eseguiti
-    - reward_cumulativa (float): reward totale dell'episodio
-    - n_fallback (int): azioni random per risposta LLM non parsificabile
-    - casse_finali (int): casse su target a fine episodio
+    solved (bool):            True se tutte le casse sono state piazzate.
+    mosse (int):              step eseguiti nell'episodio.
+    reward_cumulativa (float): reward totale accumulata.
+    n_fallback (int):         azioni casuali per risposta LLM non parsificabile.
+    casse_finali (int):       casse su target a fine episodio.
 """
 
 import json
@@ -36,7 +35,7 @@ from llm_integration.sokoban_prompt import (
     crea_prompt,
     parsifica_azione,
     conta_casse,
-    NOMI_AZIONI,   # ["su", "giu", "sinistra", "destra"] — per log storico mosse
+    NOMI_AZIONI,
 )
 
 
@@ -44,33 +43,26 @@ class AgenteAgLLM:
     """Agente AG-LLM: il LLM e' la policy diretta, nessun training RL.
 
     Parametri:
-        provider: provider LLM ('ollama' | 'groq' | 'mistral').
-        seme:     seed per riproducibilita' (usato solo per reset env).
+        seme: seed per la riproducibilita' (passato al reset dell'ambiente).
     """
 
     def __init__(self, provider: str = "ollama", seme: int = 42) -> None:
-        self.provider = provider
-        self.seme = seme
+        self.seme   = seme
         self.client = ClienteLLM(provider=provider)
 
     # ------------------------------------------------------------------
-    # Valutazione su un ambiente gia' costruito
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
-    # Helper: estrazione coordinate esplicite dall'osservazione
+    # Estrazione coordinate esplicite dall'osservazione
     # ------------------------------------------------------------------
 
     @staticmethod
     def _estrai_posizioni(obs: np.ndarray) -> str:
-        """Converte obs float32 (10,10) in stringa con coordinate esplicite.
+        """Converte l'obs float32 (10,10) in una stringa con coordinate 1-indexed.
 
-        Estrae le posizioni di giocatore, casse e target per aiutare il LLM
-        a ragionare spazialmente senza dover interpretare la griglia ASCII pura.
+        Le coordinate esplicite (riga, colonna) di giocatore, casse e target
+        aiutano il LLM a ragionare spazialmente senza interpretare la griglia
+        ASCII carattere per carattere. Le celle di padding (valore 7) vengono ignorate.
 
-        Formato: 'Giocatore: riga R, colonna C | Cassa 1: riga R, colonna C | ...'
-        Le righe/colonne sono 1-indexed per rendere la notazione piu' naturale.
-        Ignora le celle di padding (valore 7).
+        Formato output: 'Giocatore: riga R, colonna C | Cassa 1: riga R, colonna C | ...'
         """
         grid = np.round(obs).astype(int)
 
@@ -97,35 +89,40 @@ class AgenteAgLLM:
             )
         return " | ".join(parti)
 
+    # ------------------------------------------------------------------
+    # Esecuzione di un singolo episodio
+    # ------------------------------------------------------------------
+
     def valuta_episodio(self, env, max_step: int) -> Dict[str, Any]:
         """Esegue un singolo episodio usando il LLM come policy.
 
-        Parametri:
-            env:      SokobanEnv gia' inizializzato (non resettato).
-            max_step: limite di step dell'episodio (per calcolo step_rimasti).
+        Ad ogni step costruisce il prompt con stato corrente, coordinate
+        esplicite e storico delle ultime 5 mosse, poi chiede al LLM la
+        prossima azione da eseguire.
 
-        Restituisce dizionario con metriche dell'episodio.
+        Parametri:
+            env:      SokobanEnv gia' costruito (non resettato).
+            max_step: limite step dell'episodio (per il contatore nel prompt).
+
+        Restituisce:
+            Dizionario con le metriche dell'episodio.
         """
         obs, _ = env.reset()
-        reward_ep = 0.0
+        reward_ep  = 0.0
         n_fallback = 0
         casse_finali = 0
-        step_ep = 0
+        step_ep    = 0
 
-        # Storico delle ultime N mosse eseguite (anti-loop):
-        # il LLM vede le ultime 5 azioni nel prompt e puo' evitare
-        # di ripeterle in loop (es. su->giu->su->giu... infinito).
+        # Storico delle ultime 5 mosse: il LLM lo vede nel prompt e lo usa
+        # per evitare di ripetere la stessa mossa in loop (es. su->giu->su->giu)
         storico_mosse: Deque[str] = deque(maxlen=5)
 
         while True:
-            # Costruisci prompt con stato corrente + coordinate esplicite + storico mosse.
-            # Le coordinate aiutano il LLM a ragionare spazialmente.
-            # Il storico aiuta il LLM a riconoscere e uscire dai loop.
-            grid_text = griglia_a_testo(obs)
+            grid_text     = griglia_a_testo(obs)
             casse_su_tgt, n_casse = conta_casse(obs)
-            posizioni = self._estrai_posizioni(obs)
+            posizioni     = self._estrai_posizioni(obs)
 
-            # Appende storico mosse alle posizioni (stesso campo, separato da |)
+            # Aggiunge lo storico mosse alle informazioni spaziali nel prompt
             if storico_mosse:
                 posizioni += " | Ultime mosse: " + " ".join(storico_mosse)
 
@@ -138,34 +135,39 @@ class AgenteAgLLM:
                 posizioni=posizioni,
             )
 
-            # Chiedi azione al LLM — max_tokens=10 per parole lunghe (es. 'sinistra')
+            # max_tokens=10 e' sufficiente per la parola piu' lunga ('sinistra')
             risposta = self.client.chiedi(prompt, max_tokens=10)
-            azione = parsifica_azione(risposta)
+            azione   = parsifica_azione(risposta)
 
-            # Aggiorna storico mosse (dopo parsifica_azione per registrare l'azione effettiva)
+            # Registra l'azione scelta per il prossimo prompt
             storico_mosse.append(NOMI_AZIONI[azione])
 
-            # Conta fallback: la prima parola della risposta non era un'azione valida
+            # Controlla se la risposta conteneva una parola valida o e' stato
+            # usato il fallback casuale
             tokens = risposta.lower().strip().split()
             prima_parola_valida = any(t in ("su", "giu", "sinistra", "destra") for t in tokens)
             if not prima_parola_valida:
                 n_fallback += 1
 
             obs, reward, terminated, truncated, info = env.step(azione)
-            reward_ep += float(reward)
-            step_ep += 1
+            reward_ep   += float(reward)
+            step_ep     += 1
             casse_finali = info.get("casse_su_target", 0)
 
             if terminated or truncated:
                 break
 
         return {
-            "solved":             terminated,
-            "mosse":              step_ep,
-            "reward_cumulativa":  round(reward_ep, 4),
-            "n_fallback":         n_fallback,
-            "casse_finali":       casse_finali,
+            "solved":            terminated,
+            "mosse":             step_ep,
+            "reward_cumulativa": round(reward_ep, 4),
+            "n_fallback":        n_fallback,
+            "casse_finali":      casse_finali,
         }
+
+    # ------------------------------------------------------------------
+    # Valutazione su piu' episodi
+    # ------------------------------------------------------------------
 
     def valuta(
         self,
@@ -174,29 +176,29 @@ class AgenteAgLLM:
         max_step: int,
         nome_fase: str = "",
     ) -> Dict[str, Any]:
-        """Valuta l'agente su n_episodi e restituisce metriche aggregate.
+        """Valuta l'agente su n_episodi e aggrega le metriche.
 
         Parametri:
-            env:        SokobanEnv (verra' resettato n_episodi volte).
-            n_episodi:  numero di episodi da eseguire.
-            max_step:   limite step per episodio.
-            nome_fase:  nome della fase (per il logging).
+            env:       SokobanEnv (verra' resettato n_episodi volte).
+            n_episodi: numero di episodi da eseguire.
+            max_step:  limite step per episodio.
+            nome_fase: nome della fase per il logging (es. 'C0-1box-gen').
 
-        Restituisce:
-            solve_rate:         percentuale episodi risolti (0-100).
-            mosse_medie:        media step per episodi risolti (0.0 se nessun risolto).
-            reward_cumulativa:  media reward totale su tutti gli episodi.
-            fallback_rate:      percentuale step con risposta LLM non parsificabile.
-            casse_su_target:    media casse finali su target.
-            n_episodi:          numero episodi eseguiti.
-            n_risolti:          numero episodi risolti.
+        Restituisce dizionario con:
+            solve_rate:        % episodi risolti (0-100).
+            mosse_medie:       media step per episodi risolti.
+            reward_cumulativa: media reward totale su tutti gli episodi.
+            fallback_rate:     % step con risposta LLM non parsificabile.
+            casse_su_target:   media casse finali su target.
+            n_episodi:         numero episodi eseguiti.
+            n_risolti:         numero episodi risolti.
         """
         n_risolti = 0
-        mosse_risolti: List[int] = []
-        rewards: List[float] = []
+        mosse_risolti: List[int]   = []
+        rewards:       List[float] = []
         fallbacks_totali = 0
-        step_totali = 0
-        casse_totali: List[int] = []
+        step_totali      = 0
+        casse_totali:  List[int]   = []
 
         t0 = time.time()
         for i in range(n_episodi):
@@ -206,7 +208,7 @@ class AgenteAgLLM:
                 mosse_risolti.append(ep["mosse"])
             rewards.append(ep["reward_cumulativa"])
             fallbacks_totali += ep["n_fallback"]
-            step_totali += ep["mosse"]
+            step_totali      += ep["mosse"]
             casse_totali.append(ep["casse_finali"])
 
             if (i + 1) % 10 == 0:
@@ -218,11 +220,11 @@ class AgenteAgLLM:
                     + " | elapsed=" + str(round(elapsed, 1)) + "s"
                 )
 
-        solve_rate = n_risolti / n_episodi * 100
-        mosse_medie = float(np.mean(mosse_risolti)) if mosse_risolti else 0.0
+        solve_rate   = n_risolti / n_episodi * 100
+        mosse_medie  = float(np.mean(mosse_risolti)) if mosse_risolti else 0.0
         reward_media = float(np.mean(rewards))
         fallback_rate = (fallbacks_totali / step_totali * 100) if step_totali > 0 else 0.0
-        casse_medie = float(np.mean(casse_totali))
+        casse_medie  = float(np.mean(casse_totali))
 
         metriche: Dict[str, Any] = {
             "solve_rate":        round(solve_rate, 2),
@@ -247,7 +249,14 @@ class AgenteAgLLM:
         return metriche
 
     def salva_risultati(self, risultati: Dict[str, Any], percorso: Path) -> None:
-        """Salva i risultati di valutazione in formato JSON."""
+        """Salva le metriche di valutazione in formato JSON leggibile.
+
+        Crea automaticamente le directory intermedie se non esistono.
+
+        Parametri:
+            risultati: dizionario restituito da valuta().
+            percorso:  Path del file JSON di destinazione.
+        """
         percorso.parent.mkdir(parents=True, exist_ok=True)
         with open(percorso, "w", encoding="utf-8") as f:
             json.dump(risultati, f, indent=2, ensure_ascii=False)

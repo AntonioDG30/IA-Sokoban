@@ -76,7 +76,17 @@ def _leggi_max_solve_rate(dir_eval_logs: Path) -> float:
 # ---------------------------------------------------------------------------
 
 def _ottieni_wrapper_llm(env) -> RicompensaLLM:
-    """Naviga la catena wrapper per trovare RicompensaLLM."""
+    """Naviga la catena di wrapper per trovare l'istanza di RicompensaLLM.
+
+    Serve per leggere le statistiche LLM (n_chiamate, cache_hit) dopo il training.
+    La catena tipica e': Monitor -> AggiuntaCanale -> RicompensaLLM -> SokobanEnv7x7.
+    Il limite di 5 iterazioni previene loop infiniti su catene malformate.
+
+    Parametri:
+        env: ambiente (potenzialmente avvolto in piu' wrapper)
+    Restituisce:
+        istanza RicompensaLLM trovata, oppure None se assente nella catena
+    """
     curr = env
     for _ in range(5):
         if isinstance(curr, RicompensaLLM):
@@ -93,6 +103,11 @@ def _ottieni_wrapper_llm(env) -> RicompensaLLM:
 # ---------------------------------------------------------------------------
 
 def _parse_args():
+    """Legge seed e provider LLM dalla riga di comando.
+
+    Restituisce:
+        namespace argparse con attributi seed e provider
+    """
     p = argparse.ArgumentParser(description="Training AG-LLM-REW curriculum 7x7")
     p.add_argument("--seed",     type=int, default=42,              help="Seed fisso")
     p.add_argument("--provider", type=str, default=PROVIDER_DEFAULT, help="Provider LLM")
