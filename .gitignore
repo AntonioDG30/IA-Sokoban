@@ -37,7 +37,7 @@ env/
 # ---------------------------------------------------------------------------
 # Editor e OS
 # ---------------------------------------------------------------------------
-.idea/
+idea/
 .vscode/
 *.swp
 *.swo
@@ -56,6 +56,11 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# ---------------------------------------------------------------------------
+# File relazione
+# ---------------------------------------------------------------------------
+docs/relazione/
 docs/dispensa_struttura_repo.pdf
 docs/dispensa_teoria.pdf
 docs/dispensa_fonti.pdf
