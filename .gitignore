@@ -38,12 +38,18 @@ env/
 # Editor e OS
 # ---------------------------------------------------------------------------
 .idea/
-idea/teoria/
 .vscode/
 *.swp
 *.swo
 .DS_Store
 Thumbs.db
+
+# ---------------------------------------------------------------------------
+# Workspace AI e note interne
+# ---------------------------------------------------------------------------
+.claude/
+idea/
+docs/relazione/
 
 # ---------------------------------------------------------------------------
 # Jupyter
@@ -57,8 +63,6 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
-.claude/worktrees/magical-kowalevski
 docs/dispensa_struttura_repo.pdf
 docs/dispensa_teoria.pdf
 docs/dispensa_fonti.pdf
-.gitignore
