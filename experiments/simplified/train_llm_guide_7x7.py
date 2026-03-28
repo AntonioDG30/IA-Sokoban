@@ -90,7 +90,7 @@ def _parse_args():
     p.add_argument("--seed",     type=int, default=42,
                    help="Seed fisso per riproducibilita'")
     p.add_argument("--provider", type=str, default=PROVIDER_DEFAULT,
-                   help="Provider LLM per raccolta demo (ollama|groq|mistral)")
+                   help="Provider LLM per raccolta demo (ollama")
     return p.parse_args()
 
 

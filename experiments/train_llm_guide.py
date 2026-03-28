@@ -113,7 +113,7 @@ def _parse_args():
     p.add_argument("--dir-dati", type=str, default=str(DIR_DATI),
                    help="Percorso directory data/boxoban")
     p.add_argument("--provider", type=str, default="ollama",
-                   help="Provider LLM per raccolta demo (ollama|groq|mistral)")
+                   help="Provider LLM per raccolta demo (ollama")
     return p.parse_args()
 
 
