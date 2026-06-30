@@ -1,28 +1,25 @@
-"""Test unitari per sokoban_env/sokoban_gym.py.
-
-Verifica il comportamento dell'ambiente Gymnasium: reset, step, spazi
-di azione/osservazione e ciclo episodico completo.
-I livelli builtin vengono usati ovunque: non serve il dataset Boxoban.
-
-Esegui con: pytest tests/test_env.py -v
-"""
+# Test unitari per core/ambiente/sokoban_gym.py.
+#
+# Verifica il comportamento dell'ambiente Gymnasium: reset, step, spazi di azione e
+# osservazione e il ciclo episodico completo. Usa ovunque i livelli builtin, quindi non
+# serve il dataset Boxoban.
+#
+# Esegui con: pytest tests/test_env.py -v
 
 import numpy as np
 import pytest
 
-from sokoban_env import SokobanEnv
+from core.ambiente import SokobanEnv
 
 
-# ---------------------------------------------------------------------------
-# Fixture
-# ---------------------------------------------------------------------------
+# FIXTURE
 
 @pytest.fixture
 def env():
-    """Crea un ambiente headless (no Pygame) per i test automatici.
-
-    render_mode=None evita l'inizializzazione di Pygame, che richiederebbe
-    un display fisico e rallenterebbe l'esecuzione in CI.
+    """
+    Crea un ambiente headless (senza Pygame) per i test automatici.
+    render_mode=None evita di inizializzare Pygame, che richiederebbe un display e
+    rallenterebbe l'esecuzione in CI.
     """
     ambiente = SokobanEnv(render_mode=None, seme=42)
     yield ambiente
@@ -31,14 +28,12 @@ def env():
 
 @pytest.fixture
 def env_con_indice(env):
-    """Ambiente pre-resettato sul livello 0 (builtin, 1 cassa, vincibile in 1 mossa)."""
+    """Ambiente pre-resettato sul livello 0 (builtin, 1 cassa, vincibile in una mossa)."""
     env.reset(options={"indice_livello": 0})
     return env
 
 
-# ---------------------------------------------------------------------------
-# Test reset
-# ---------------------------------------------------------------------------
+# TEST reset
 
 class TestReset:
     def test_reset_restituisce_osservazione_e_info(self, env):
@@ -59,29 +54,26 @@ class TestReset:
         assert info["step_corrente"] == 0
 
     def test_reset_con_indice_specifico(self, env):
-        """Due reset sullo stesso indice devono produrre la griglia identica."""
+        """Due reset sullo stesso indice devono produrre una griglia identica."""
         obs1, _ = env.reset(options={"indice_livello": 0})
         obs2, _ = env.reset(options={"indice_livello": 0})
         np.testing.assert_array_equal(obs1, obs2)
 
     def test_osservazione_valori_nel_range(self, env):
-        """I valori di osservazione devono stare in [0, 6].
-
-        7 e' il valore di PADDING usato internamente per griglie piu' piccole,
-        ma non deve mai comparire nell'osservazione esportata all'agente.
+        """
+        I valori dell'osservazione devono stare in [0, 6]: il 7 è il PADDING usato
+        internamente per le griglie più piccole, ma non deve mai uscire verso l'agente.
         """
         obs, _ = env.reset()
         assert obs.min() >= 0
         assert obs.max() <= 6
 
 
-# ---------------------------------------------------------------------------
-# Test step
-# ---------------------------------------------------------------------------
+# TEST step
 
 class TestStep:
     def test_step_restituisce_struttura_corretta(self, env):
-        """step() deve restituire una tupla di 5 elementi con i tipi corretti."""
+        """step() deve restituire una tupla di 5 elementi, con i tipi corretti."""
         env.reset()
         risultato = env.step(0)
         assert len(risultato) == 5
@@ -94,18 +86,18 @@ class TestStep:
         assert isinstance(info, dict)
 
     def test_step_penalita_per_mossa(self, env):
-        """Un movimento senza push deve dare esattamente -0.005 (penalita' step)."""
+        """Un movimento senza spinta deve valere esattamente -0.005 (penalità di step)."""
         env.reset(options={"indice_livello": 0})
-        # Azione su: il giocatore si sposta su pavimento libero, nessuna cassa
+        # Azione "su": il giocatore va su pavimento libero, nessuna cassa coinvolta
         _, reward, terminated, _, _ = env.step(0)
         assert not terminated
         assert reward == pytest.approx(-0.005, abs=1e-6)
 
     def test_step_vittoria_reward_positiva(self, env):
-        """Livello 0: giocatore-cassa-target allineati. Destra porta alla vittoria."""
+        """Livello 0: giocatore-cassa-target allineati, "destra" porta alla vittoria."""
         env.reset(options={"indice_livello": 0})
-        # Nel livello 0: giocatore in (2,2), cassa in (2,3), target in (2,4)
-        # Una sola azione destra (3) spinge la cassa sul target
+        # Livello 0: giocatore in (2,2), cassa in (2,3), target in (2,4).
+        # Una sola azione "destra" (3) spinge la cassa sul target
         _, reward, terminated, _, _ = env.step(3)
         assert terminated is True
         # reward = +10 (completamento) + 1 (cassa su target) - 0.005 (step) = 10.995
@@ -116,7 +108,7 @@ class TestStep:
         env = SokobanEnv(max_step=3, render_mode=None, seme=42)
         env.reset(options={"indice_livello": 2})
         truncated = False
-        # Azione "giu'" ripetuta non porta alla vittoria: garantisce la truncation
+        # Ripetere "giù" non porta alla vittoria: garantisce la truncation
         for _ in range(10):
             _, _, terminated, truncated, _ = env.step(1)
             if terminated or truncated:
@@ -125,20 +117,20 @@ class TestStep:
         assert truncated is True
 
     def test_step_non_terminato_se_casse_non_tutte_su_target(self, env):
-        """Un singolo step su livello con piu' casse non basta per vincere."""
+        """Un solo step su un livello con più casse non basta per vincere."""
         env.reset(options={"indice_livello": 2})
         _, _, terminated, _, _ = env.step(0)
         assert terminated is False
 
     def test_info_contiene_step_corrente(self, env):
-        """info['step_corrente'] deve essere 1 dopo il primo step."""
+        """info['step_corrente'] deve valere 1 dopo il primo step."""
         env.reset()
         _, _, _, _, info = env.step(1)
         assert "step_corrente" in info
         assert info["step_corrente"] == 1
 
     def test_info_contiene_casse_su_target(self, env):
-        """info deve sempre includere il campo 'casse_su_target' come int."""
+        """info deve includere sempre il campo 'casse_su_target' come int."""
         env.reset()
         _, _, _, _, info = env.step(0)
         assert "casse_su_target" in info
@@ -152,20 +144,17 @@ class TestStep:
         env.close()
 
 
-# ---------------------------------------------------------------------------
-# Test spazi Gymnasium
-# ---------------------------------------------------------------------------
+# TEST SPAZI GYMNASIUM
 
 class TestSpazi:
     def test_action_space_discrete4(self, env):
-        """Lo spazio azioni deve essere Discrete(4): su, giu, sinistra, destra."""
+        """Lo spazio delle azioni deve essere Discrete(4): su, giù, sinistra, destra."""
         assert env.action_space.n == 4
 
     def test_observation_space_box(self, env):
-        """Observation space: Box float32, shape (10,10), valori in [0, 7].
-
-        float32 e' obbligatorio per SB3/PyTorch.
-        7 e' PADDING (usato per griglie piu' piccole di 10x10).
+        """
+        Observation space: Box float32, shape (10,10), valori in [0, 7].
+        float32 è obbligatorio per SB3/PyTorch; il 7 è il PADDING (griglie < 10x10).
         """
         assert env.observation_space.shape == (10, 10)
         assert env.observation_space.dtype == np.float32
@@ -173,7 +162,7 @@ class TestSpazi:
         assert env.observation_space.high.max() == 7.0
 
     def test_azioni_valide_nel_action_space(self, env):
-        """Tutti e quattro gli interi 0-3 devono essere nel action_space."""
+        """Tutti e quattro gli interi 0-3 devono appartenere all'action_space."""
         for azione in range(4):
             assert env.action_space.contains(azione)
 
@@ -183,13 +172,11 @@ class TestSpazi:
         assert env.observation_space.contains(obs)
 
 
-# ---------------------------------------------------------------------------
-# Test agente random (sanity check)
-# ---------------------------------------------------------------------------
+# TEST AGENTE RANDOM (SANITY CHECK)
 
 class TestAgenteRandom:
     def test_episodio_completo_agente_random(self):
-        """Un episodio completo con azioni casuali non deve causare eccezioni."""
+        """Un episodio intero con azioni casuali non deve sollevare eccezioni."""
         env = SokobanEnv(render_mode=None, seme=0)
         obs, info = env.reset()
         totale_reward = 0.0
@@ -206,7 +193,7 @@ class TestAgenteRandom:
         assert isinstance(totale_reward, float)
 
     def test_piu_episodi_consecutivi(self):
-        """Cinque reset consecutivi non devono causare errori o perdite di stato."""
+        """Cinque reset consecutivi non devono dare errori o perdite di stato."""
         env = SokobanEnv(render_mode=None, seme=1)
         for _ in range(5):
             obs, _ = env.reset()

@@ -1,0 +1,370 @@
+{
+  "seed": 42,
+  "modalita": "best_per_fase",
+  "agenti": {
+    "C0-1box-gen": {
+      "AG-PPO": {
+        "solve_rate": 3.0,
+        "mosse_medie": 19.0,
+        "reward_cumulativa": -0.1099,
+        "casse_su_target": 0.03,
+        "n_episodi": 100,
+        "n_risolti": 3,
+        "fonte_modello": "best"
+      },
+      "AG-DQN": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -0.376,
+        "casse_su_target": 0.0,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      },
+      "AG-LLM-ACT": {
+        "solve_rate": 2.0,
+        "mosse_medie": 11.5,
+        "reward_cumulativa": -0.4042,
+        "fallback_rate": 0.0,
+        "casse_su_target": 0.02,
+        "n_episodi": 100,
+        "n_risolti": 2,
+        "elapsed_sec": 3389.6
+      },
+      "AG-LLM-GUIDE": {
+        "solve_rate": 1.0,
+        "mosse_medie": 9.0,
+        "reward_cumulativa": -0.2655,
+        "casse_su_target": 0.01,
+        "n_episodi": 100,
+        "n_risolti": 1,
+        "fonte_modello": "best"
+      },
+      "AG-LLM-REW": {
+        "solve_rate": 3.0,
+        "mosse_medie": 42.67,
+        "reward_cumulativa": -0.1504,
+        "casse_su_target": 0.03,
+        "n_episodi": 100,
+        "n_risolti": 3,
+        "fonte_modello": "best"
+      }
+    },
+    "C1-2box-gen": {
+      "AG-PPO": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -0.592,
+        "casse_su_target": 0.07,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      },
+      "AG-DQN": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -0.65,
+        "casse_su_target": 0.01,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      },
+      "AG-LLM-ACT": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -0.878,
+        "fallback_rate": 0.0,
+        "casse_su_target": 0.01,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "elapsed_sec": 4474.4
+      },
+      "AG-LLM-GUIDE": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -0.765,
+        "casse_su_target": 0.0,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      },
+      "AG-LLM-REW": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -0.565,
+        "casse_su_target": 0.06,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      }
+    },
+    "C2-3box-gen": {
+      "AG-PPO": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -0.744,
+        "casse_su_target": 0.13,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      },
+      "AG-DQN": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.004,
+        "casse_su_target": 0.01,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      },
+      "AG-LLM-ACT": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.124,
+        "fallback_rate": 0.0,
+        "casse_su_target": 0.03,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "elapsed_sec": 6358.5
+      },
+      "AG-LLM-GUIDE": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -0.974,
+        "casse_su_target": 0.01,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      },
+      "AG-LLM-REW": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -0.863,
+        "casse_su_target": 0.09,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      }
+    },
+    "C3-4box-gen": {
+      "AG-PPO": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -0.967,
+        "casse_su_target": 0.12,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      },
+      "AG-DQN": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.271,
+        "casse_su_target": 0.01,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      },
+      "AG-LLM-ACT": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.259,
+        "fallback_rate": 0.0,
+        "casse_su_target": 0.07,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "elapsed_sec": 8377.3
+      },
+      "AG-LLM-GUIDE": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.268,
+        "casse_su_target": 0.02,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      },
+      "AG-LLM-REW": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.206,
+        "casse_su_target": 0.12,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      }
+    },
+    "C4-4box-medium": {
+      "AG-PPO": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.051,
+        "casse_su_target": 0.27,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      },
+      "AG-DQN": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.432,
+        "casse_su_target": 0.03,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      },
+      "AG-LLM-ACT": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.19,
+        "fallback_rate": 0.0,
+        "casse_su_target": 0.21,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "elapsed_sec": 9880.9
+      },
+      "AG-LLM-GUIDE": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.442,
+        "casse_su_target": 0.04,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      },
+      "AG-LLM-REW": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.181,
+        "casse_su_target": 0.2,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      }
+    },
+    "C5-4box-unfiltered": {
+      "AG-PPO": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.186,
+        "casse_su_target": 0.28,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      },
+      "AG-DQN": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.531,
+        "casse_su_target": 0.01,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      },
+      "AG-LLM-ACT": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.375,
+        "fallback_rate": 0.0,
+        "casse_su_target": 0.19,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "elapsed_sec": 9861.8
+      },
+      "AG-LLM-GUIDE": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.473,
+        "casse_su_target": 0.03,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      },
+      "AG-LLM-REW": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.368,
+        "casse_su_target": 0.21,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      }
+    },
+    "val-medium": {
+      "AG-PPO": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -0.993,
+        "casse_su_target": 0.28,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      },
+      "AG-DQN": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.417,
+        "casse_su_target": 0.04,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      },
+      "AG-LLM-GUIDE": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.418,
+        "casse_su_target": 0.05,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      },
+      "AG-LLM-REW": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.15,
+        "casse_su_target": 0.24,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      }
+    },
+    "val-unfiltered": {
+      "AG-PPO": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.186,
+        "casse_su_target": 0.28,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      },
+      "AG-DQN": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.531,
+        "casse_su_target": 0.01,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      },
+      "AG-LLM-GUIDE": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.473,
+        "casse_su_target": 0.03,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      },
+      "AG-LLM-REW": {
+        "solve_rate": 0.0,
+        "mosse_medie": 0.0,
+        "reward_cumulativa": -1.368,
+        "casse_su_target": 0.21,
+        "n_episodi": 100,
+        "n_risolti": 0,
+        "fonte_modello": "best"
+      }
+    }
+  }
+}

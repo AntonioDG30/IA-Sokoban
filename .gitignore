@@ -1,11 +1,8 @@
 # ---------------------------------------------------------------------------
-# Dati e modelli (scaricati/generati a runtime)
+# Dati e artefatti (scaricati/generati a runtime)
 # ---------------------------------------------------------------------------
-data/
-models/
-models_7x7/
-logs/
-logs_7x7/
+dataset/boxoban/
+artifacts/
 
 # ---------------------------------------------------------------------------
 # API Key e configurazione locale
@@ -60,9 +57,6 @@ Thumbs.db
 htmlcov/
 
 # ---------------------------------------------------------------------------
-# File relazione
+# Documenti interni di lavoro (NON consegnare: note di sviluppo)
 # ---------------------------------------------------------------------------
-docs/relazione/
-docs/dispensa_struttura_repo.pdf
-docs/dispensa_teoria.pdf
-docs/dispensa_fonti.pdf
+docs/interni/
